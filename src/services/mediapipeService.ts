@@ -88,6 +88,8 @@ export function extractFaceData(
       eyeBlinkRight: 0,
       mouthSmile: 0,
       mouthPucker: 0,
+      mouthFunnel: 0,
+      mouthStretch: 0,
       pitch: 0,
       yaw: 0,
       roll: 0,
@@ -102,6 +104,9 @@ export function extractFaceData(
   let smileLeft = 0;
   let smileRight = 0;
   let mouthPucker = 0;
+  let mouthFunnel = 0;
+  let stretchLeft = 0;
+  let stretchRight = 0;
 
   if (result.faceBlendshapes && result.faceBlendshapes.length > 0) {
     const categories = result.faceBlendshapes[0].categories;
@@ -125,6 +130,15 @@ export function extractFaceData(
           break;
         case 'mouthPucker':
           mouthPucker = cat.score;
+          break;
+        case 'mouthFunnel':
+          mouthFunnel = cat.score;
+          break;
+        case 'mouthStretchLeft':
+          stretchLeft = cat.score;
+          break;
+        case 'mouthStretchRight':
+          stretchRight = cat.score;
           break;
       }
     }
@@ -199,6 +213,8 @@ export function extractFaceData(
     eyeBlinkRight: Math.max(0, Math.min(1, eyeBlinkRight)),
     mouthSmile: Math.max(0, Math.min(1, (smileLeft + smileRight) / 2)),
     mouthPucker: Math.max(0, Math.min(1, mouthPucker)),
+    mouthFunnel: Math.max(0, Math.min(1, mouthFunnel)),
+    mouthStretch: Math.max(0, Math.min(1, (stretchLeft + stretchRight) / 2)),
     pitch: clampedPitch,
     yaw: clampedYaw,
     roll: clampedRoll,

@@ -79,7 +79,7 @@ export const TikTokStudioGuide: React.FC<TikTokStudioGuideProps> = ({
                 Nel programma TikTok LIVE Studio su Windows 11, premi <strong className="text-white">+ Aggiungi sorgente</strong> e scegli <strong>"Cattura Finestra" (Window Capture)</strong>.
               </p>
               <p className="text-zinc-400 mt-1">
-                Seleziona dall'elenco la finestra del browser: <code className="bg-zinc-950 px-1 py-0.5 rounded text-red-400">TWINHITS FACECAM - Output Studio</code>.
+                Seleziona dall'elenco la finestra del browser: <code className="bg-zinc-950 px-1 py-0.5 rounded text-red-400">TWINHITS FACECAM - LIVE OUTPUT</code>.
               </p>
             </div>
           </div>

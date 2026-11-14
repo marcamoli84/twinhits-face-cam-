@@ -7,6 +7,7 @@ import {
   AspectRatioMode,
   BackgroundMode,
   ScenographySettings,
+  StadiumBackgroundSettings,
 } from '../types/vtuber';
 
 export const SYNC_CHANNEL_NAME = 'twinhits_sync_stream';
@@ -22,6 +23,7 @@ export interface SyncPacket {
   aspectRatio: AspectRatioMode;
   backgroundMode: BackgroundMode;
   scenographySettings?: ScenographySettings;
+  stadiumBgSettings?: StadiumBackgroundSettings;
   customBgColor?: string;
   sourceWindowId?: string;
 }
@@ -43,6 +45,7 @@ export class StreamSyncManager {
   private channel: BroadcastChannel | null = null;
   private targetWindow: Window | null = null;
   private onMessageCallback: ((packet: AnySyncMessage) => void) | null = null;
+  private boundWindowMessageHandler: ((event: MessageEvent) => void) | null = null;
   private isDestroyed = false;
 
   constructor(onMessage?: (packet: AnySyncMessage) => void) {
@@ -85,6 +88,7 @@ export class StreamSyncManager {
       }
     };
 
+    this.boundWindowMessageHandler = handleWindowMessage;
     window.addEventListener('message', handleWindowMessage);
   }
 
@@ -160,6 +164,10 @@ export class StreamSyncManager {
 
   public destroy() {
     this.isDestroyed = true;
+    if (typeof window !== 'undefined' && this.boundWindowMessageHandler) {
+      window.removeEventListener('message', this.boundWindowMessageHandler);
+      this.boundWindowMessageHandler = null;
+    }
     if (this.channel) {
       try {
         this.channel.close();

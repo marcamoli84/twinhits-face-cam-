@@ -1,10 +1,19 @@
-import { Character, TrackingSettings, DualHostSettings, BackgroundMode, AspectRatioMode, LiveMode } from '../types/vtuber';
+import {
+  Character,
+  TrackingSettings,
+  DualHostSettings,
+  BackgroundMode,
+  AspectRatioMode,
+  LiveMode,
+  StadiumBackgroundSettings,
+} from '../types/vtuber';
 import { DEFAULT_CHARACTERS } from '../utils/defaultCharacters';
 
 const DB_NAME = 'TwinHitsFaceCamDB';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_CHARACTERS = 'characters';
 const STORE_CONFIG = 'config';
+const STORE_AVATAR_MEDIA = 'avatar_media';
 
 let dbInstance: IDBDatabase | null = null;
 
@@ -21,6 +30,9 @@ export async function getDB(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains(STORE_CONFIG)) {
         db.createObjectStore(STORE_CONFIG, { keyPath: 'key' });
+      }
+      if (!db.objectStoreNames.contains(STORE_AVATAR_MEDIA)) {
+        db.createObjectStore(STORE_AVATAR_MEDIA, { keyPath: 'key' });
       }
     };
 
@@ -88,9 +100,11 @@ export async function loadAllCharacters(): Promise<Character[]> {
     });
 
     if (charsFromDB.length > 0) {
-      // Merge default characters if not present
+      // Merge default characters, allowing edited/custom entries to override by id without duplicates
       const customOnly = charsFromDB.filter((c) => !c.isPreset);
-      return [...DEFAULT_CHARACTERS, ...customOnly];
+      const customIds = new Set(customOnly.map((c) => c.id));
+      const presets = DEFAULT_CHARACTERS.filter((c) => !customIds.has(c.id));
+      return [...presets, ...customOnly];
     }
   } catch (err) {
     console.warn('Caricamento da IndexedDB non riuscito, fallback localStorage', err);
@@ -120,6 +134,8 @@ export async function saveAppConfig(config: {
   backgroundMode?: BackgroundMode;
   aspectRatio?: AspectRatioMode;
   liveMode?: LiveMode;
+  stadiumBgSettings?: StadiumBackgroundSettings;
+  isLayoutLocked?: boolean;
 }): Promise<void> {
   try {
     const db = await getDB();
@@ -155,3 +171,116 @@ export async function loadAppConfig(): Promise<Record<string, unknown>> {
     return {};
   }
 }
+
+const KEY_STADIUM_CUSTOM_IMAGE = 'stadium_custom_image';
+const KEY_STADIUM_CUSTOM_VIDEO = 'stadium_custom_video';
+
+export async function saveStadiumCustomImage(dataUrl: string | null): Promise<void> {
+  try {
+    const db = await getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_CONFIG, 'readwrite');
+      const store = tx.objectStore(STORE_CONFIG);
+      if (dataUrl) {
+        store.put({ key: KEY_STADIUM_CUSTOM_IMAGE, value: dataUrl });
+      } else {
+        store.delete(KEY_STADIUM_CUSTOM_IMAGE);
+      }
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (e) {
+    console.warn('Impossibile salvare immagine stadio personalizzata in IndexedDB', e);
+  }
+}
+
+export async function loadStadiumCustomImage(): Promise<string | null> {
+  try {
+    const db = await getDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction(STORE_CONFIG, 'readonly');
+      const store = tx.objectStore(STORE_CONFIG);
+      const req = store.get(KEY_STADIUM_CUSTOM_IMAGE);
+      req.onsuccess = () => resolve(typeof req.result?.value === 'string' ? req.result.value : null);
+      req.onerror = () => resolve(null);
+    });
+  } catch (e) {
+    return null;
+  }
+}
+
+export async function saveStadiumCustomVideo(blob: Blob | null): Promise<void> {
+  try {
+    const db = await getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_CONFIG, 'readwrite');
+      const store = tx.objectStore(STORE_CONFIG);
+      if (blob) {
+        store.put({ key: KEY_STADIUM_CUSTOM_VIDEO, value: blob });
+      } else {
+        store.delete(KEY_STADIUM_CUSTOM_VIDEO);
+      }
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (e) {
+    console.warn('Impossibile salvare video stadio personalizzato in IndexedDB', e);
+  }
+}
+
+export async function loadStadiumCustomVideo(): Promise<Blob | null> {
+  try {
+    const db = await getDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction(STORE_CONFIG, 'readonly');
+      const store = tx.objectStore(STORE_CONFIG);
+      const req = store.get(KEY_STADIUM_CUSTOM_VIDEO);
+      req.onsuccess = () => resolve(req.result?.value instanceof Blob ? req.result.value : null);
+      req.onerror = () => resolve(null);
+    });
+  } catch (e) {
+    return null;
+  }
+}
+
+export async function saveAvatarMediaBlob(key: string, blob: Blob): Promise<void> {
+  const db = await getDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_AVATAR_MEDIA, 'readwrite');
+    const store = tx.objectStore(STORE_AVATAR_MEDIA);
+    store.put({ key, blob });
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+export async function loadAvatarMediaBlob(key: string): Promise<Blob | null> {
+  try {
+    const db = await getDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction(STORE_AVATAR_MEDIA, 'readonly');
+      const store = tx.objectStore(STORE_AVATAR_MEDIA);
+      const req = store.get(key);
+      req.onsuccess = () => resolve(req.result?.blob instanceof Blob ? req.result.blob : null);
+      req.onerror = () => resolve(null);
+    });
+  } catch (e) {
+    return null;
+  }
+}
+
+export async function deleteAvatarMediaBlob(key: string): Promise<void> {
+  try {
+    const db = await getDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction(STORE_AVATAR_MEDIA, 'readwrite');
+      const store = tx.objectStore(STORE_AVATAR_MEDIA);
+      store.delete(key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    });
+  } catch (e) {
+    // ignore
+  }
+}
+

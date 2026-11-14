@@ -1,6 +1,27 @@
+export type CharacterSlotKey =
+  | 'silent'
+  | 'speaking'
+  | 'mouthA'
+  | 'mouthE'
+  | 'mouthO'
+  | 'eyesClosed';
+
+export type AvatarMediaType = 'image' | 'gif' | 'video';
+
+export type TransparencyStatus = 'transparent' | 'opaque' | 'unsupported' | 'unknown';
+
+export interface MediaValidationInfo {
+  mediaType: AvatarMediaType;
+  playable: boolean;
+  transparency: TransparencyStatus;
+  width?: number;
+  height?: number;
+  message?: string;
+}
+
 export interface CharacterImages {
-  silent: string;      // Base64 PNG or image URL - Closed mouth
-  speaking: string;    // Base64 PNG or image URL - Open mouth
+  silent: string;      // Base64 PNG/GIF or image URL - Closed mouth
+  speaking: string;    // Base64 PNG/GIF or image URL - Open mouth
   mouthA?: string;     // Optional open 'A' mouth
   mouthE?: string;     // Optional open 'E' mouth
   mouthO?: string;     // Optional open 'O' mouth
@@ -13,6 +34,9 @@ export interface Character {
   description?: string;
   isPreset?: boolean;
   images: CharacterImages;
+  mediaTypes?: Partial<Record<CharacterSlotKey, AvatarMediaType>>;
+  mediaKeys?: Partial<Record<CharacterSlotKey, string>>; // IndexedDB keys for WebM/large GIF blobs
+  mediaChecks?: Partial<Record<CharacterSlotKey, MediaValidationInfo>>;
   anchorX?: number; // 0 to 1, default 0.5
   anchorY?: number; // 0 to 1, default 0.8
 }
@@ -35,6 +59,8 @@ export interface FaceData {
   eyeBlinkRight: number; // 0.0 to 1.0
   mouthSmile: number;    // 0.0 to 1.0
   mouthPucker: number;   // 0.0 to 1.0
+  mouthFunnel?: number;  // 0.0 to 1.0
+  mouthStretch?: number; // 0.0 to 1.0
   pitch: number;         // degrees - head up/down
   yaw: number;           // degrees - head left/right
   roll: number;          // degrees - head tilt
@@ -44,11 +70,15 @@ export interface FaceData {
 export type LiveMode = 'solo' | 'dual' | 'scenography';
 export type AspectRatioMode = '16:9' | '9:16' | 'fill';
 export type BackgroundMode = 'dark' | 'green' | 'stadium' | 'scenography' | 'custom';
-export type ScenographyTheme = 'studio_led' | 'stadium_future' | 'energy_arena';
+export type ScenographyTheme =
+  | 'san_siro_twinhits'
+  | 'studio_led'
+  | 'stadium_future'
+  | 'energy_arena';
 
 export interface ScenographySettings {
   enabled: boolean;
-  theme: ScenographyTheme; // 'studio_led' | 'stadium_future' | 'energy_arena'
+  theme: ScenographyTheme; // 'san_siro_twinhits' | 'studio_led' | 'stadium_future' | 'energy_arena'
   motionIntensity: number; // 0.0 to 1.5 (scale movement)
   brightness: number;      // 0.3 to 1.5 (ambient and light intensity)
   smokeIntensity: number;  // 0.0 to 1.0 (smoke puffs quantity)
@@ -65,5 +95,24 @@ export interface DualHostSettings {
   webcamBorderColor: string;
   webcamLabel: string;
   avatarLabel: string;
+}
+
+export type StadiumBackgroundPreset =
+  | 'none'
+  | 'studio_rossonero'
+  | 'stadio_reale'
+  | 'stadio_reale_sfumato'
+  | 'custom_image'
+  | 'custom_video';
+
+export interface StadiumBackgroundSettings {
+  preset: StadiumBackgroundPreset;
+  opacity: number;             // 0.1 to 1.0
+  blur: number;                // 0 to 24 px
+  brightness: number;          // 0.2 to 1.5
+  overlayDarkness: number;     // 0.0 to 0.85
+  customMediaVersion: number;  // bumped whenever custom media in IndexedDB changes
+  customImageName?: string;
+  customVideoName?: string;
 }
 

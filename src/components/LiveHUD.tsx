@@ -1,6 +1,16 @@
 import React from 'react';
 import { FaceData } from '../types/vtuber';
-import { Video, Activity, Smile, Gauge, AlertCircle, Compass, RefreshCw, Sparkles, HelpCircle } from 'lucide-react';
+import {
+  Video,
+  Activity,
+  Smile,
+  Gauge,
+  AlertCircle,
+  Compass,
+  RefreshCw,
+  Sparkles,
+  HelpCircle,
+} from 'lucide-react';
 
 interface LiveHUDProps {
   webcamDeviceName: string;
@@ -25,8 +35,23 @@ export const LiveHUD: React.FC<LiveHUDProps> = ({
   onStartSimulation,
   onOpenGuide,
 }) => {
-  const isDeviceInUse = cameraError?.toLowerCase().includes('device in use') || 
-                        cameraError?.toLowerCase().includes('occupat');
+  const mouthStateLabel = !faceData.detected
+    ? 'SILENT'
+    : faceData.jawOpen > 0.30
+    ? 'BOCCA A'
+    : faceData.jawOpen > 0.16 && Math.max(faceData.mouthPucker, faceData.mouthFunnel || 0) > 0.42
+    ? 'BOCCA O'
+    : faceData.jawOpen > 0.16 && Math.max(faceData.mouthSmile, faceData.mouthStretch || 0) > 0.42
+    ? 'BOCCA E'
+    : faceData.jawOpen > 0.16
+    ? 'SPEAKING'
+    : (faceData.eyeBlinkLeft + faceData.eyeBlinkRight) / 2 > 0.45
+    ? 'BLINK'
+    : 'SILENT';
+
+  const isDeviceInUse =
+    cameraError?.toLowerCase().includes('device in use') ||
+    cameraError?.toLowerCase().includes('occupat');
 
   return (
     <div className="w-full flex flex-col gap-2">
@@ -78,7 +103,9 @@ export const LiveHUD: React.FC<LiveHUDProps> = ({
 
           {isDeviceInUse && (
             <div className="bg-black/40 border border-red-800/40 p-2.5 rounded-xl text-[11px] text-zinc-300 space-y-1">
-              <span className="font-bold text-red-300 block">💡 Come risolvere il blocco con TikTok LIVE Studio:</span>
+              <span className="font-bold text-red-300 block">
+                Come risolvere il blocco con TikTok LIVE Studio:
+              </span>
               <p>
                 1. Spegni la webcam dentro TikTok LIVE Studio (o cancella la sorgente webcam USB diretta).
               </p>
@@ -86,7 +113,9 @@ export const LiveHUD: React.FC<LiveHUDProps> = ({
                 2. Clicca qui sopra su <strong className="text-white">"Riprova Connessione"</strong> per riprendere il segnale.
               </p>
               <p>
-                3. In TikTok LIVE Studio, aggiungi la telecronaca cliccando su <strong className="text-white">+ Aggiungi sorgente &gt; Cattura Finestra</strong> e seleziona la <strong className="text-red-400">Finestra Pulita Output</strong> di TwinHits!
+                3. In TikTok LIVE Studio, aggiungi la telecronaca cliccando su{' '}
+                <strong className="text-white">+ Aggiungi sorgente &gt; Cattura Finestra</strong> e seleziona{' '}
+                <strong className="text-red-400">TWINHITS FACECAM - LIVE OUTPUT</strong>!
               </p>
             </div>
           )}
@@ -95,7 +124,6 @@ export const LiveHUD: React.FC<LiveHUDProps> = ({
 
       {/* Main HUD Bar */}
       <div className="bg-zinc-950/90 border border-zinc-800/90 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3 text-xs font-mono shadow-md">
-        
         {/* 1. Webcam Status */}
         <div className="flex items-center gap-2">
           <div className="w-6 h-6 rounded-md bg-zinc-900 border border-zinc-700 flex items-center justify-center text-zinc-300">
@@ -152,21 +180,25 @@ export const LiveHUD: React.FC<LiveHUDProps> = ({
           </div>
         </div>
 
-        {/* 4. Mouth Openness */}
+        {/* 4. MediaPipe Mouth Openness & Expression State */}
         <div className="flex items-center gap-2">
           <div className="w-6 h-6 rounded-md bg-zinc-900 border border-zinc-700 flex items-center justify-center text-zinc-300">
             <Smile className="w-3.5 h-3.5" />
           </div>
-          <div className="w-28">
+          <div className="w-36">
             <div className="flex justify-between items-center text-[10px] text-zinc-400 leading-none mb-1">
-              <span>Bocca</span>
-              <span className="font-bold text-red-400">
-                {Math.round(faceData.jawOpen * 100)}%
+              <span>Espressione</span>
+              <span
+                className={`font-bold ${
+                  mouthStateLabel !== 'SILENT' ? 'text-red-400' : 'text-zinc-500'
+                }`}
+              >
+                {mouthStateLabel} {Math.round(faceData.jawOpen * 100)}%
               </span>
             </div>
-            <div className="w-full bg-zinc-900 rounded-full h-1.5 overflow-hidden border border-zinc-800">
+            <div className="relative w-full bg-zinc-900 rounded-full h-1.5 overflow-hidden border border-zinc-800">
               <div
-                className="bg-red-500 h-full rounded-full transition-all duration-75"
+                className="h-full rounded-full bg-red-500 transition-all duration-75"
                 style={{ width: `${Math.min(100, Math.round(faceData.jawOpen * 100))}%` }}
               />
             </div>
