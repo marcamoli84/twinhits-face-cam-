@@ -63,6 +63,8 @@ export const CleanOutputView: React.FC = () => {
 
   const [completedGoalTriggerId, setCompletedGoalTriggerId] = useState<number>(0);
   const [activeGoalTriggerId, setActiveGoalTriggerId] = useState<number>(0);
+  const [completedAngryTriggerId, setCompletedAngryTriggerId] = useState<number>(0);
+  const [activeAngryTriggerId, setActiveAngryTriggerId] = useState<number>(0);
 
   const lastReceivedRef = useRef<number>(0);
   const syncManagerRef = useRef<StreamSyncManager | null>(null);
@@ -71,6 +73,8 @@ export const CleanOutputView: React.FC = () => {
   const avatarMediaCacheRef = useRef<Record<string, string>>({});
   const completedGoalTriggerIdRef = useRef<number>(0);
   const goalGraceTimerRef = useRef<number | null>(null);
+  const completedAngryTriggerIdRef = useRef<number>(0);
+  const angryGraceTimerRef = useRef<number | null>(null);
 
   // Set permanent window title for TikTok LIVE Studio Window Capture
   useEffect(() => {
@@ -147,7 +151,7 @@ export const CleanOutputView: React.FC = () => {
         setSyncState(packet);
 
         const packetTriggerId = packet.goalTriggerId ?? 0;
-        if (!packet.goalVoiceEnabled) {
+        if (!packet.goalVoiceEnabled && !packet.goalActive) {
           if (goalGraceTimerRef.current) {
             clearTimeout(goalGraceTimerRef.current);
             goalGraceTimerRef.current = null;
@@ -159,6 +163,15 @@ export const CleanOutputView: React.FC = () => {
           if (goalGraceTimerRef.current) {
             clearTimeout(goalGraceTimerRef.current);
             goalGraceTimerRef.current = null;
+          }
+          // If an angry reaction was in its short grace tail, finalize it immediately so GOAL starts cleanly
+          if (angryGraceTimerRef.current) {
+            clearTimeout(angryGraceTimerRef.current);
+            angryGraceTimerRef.current = null;
+            const prevAngry = packet.angryTriggerId ?? 0;
+            completedAngryTriggerIdRef.current = prevAngry;
+            setCompletedAngryTriggerId(prevAngry);
+            setActiveAngryTriggerId(0);
           }
           if (packetTriggerId !== completedGoalTriggerIdRef.current) {
             setActiveGoalTriggerId(packetTriggerId);
@@ -174,6 +187,45 @@ export const CleanOutputView: React.FC = () => {
               completedGoalTriggerIdRef.current = packetTriggerId;
               setCompletedGoalTriggerId(packetTriggerId);
               setActiveGoalTriggerId(0);
+            }, 450);
+          }
+        }
+
+        const packetAngryTriggerId = packet.angryTriggerId ?? 0;
+        if (!packet.angryVoiceEnabled && !packet.angryActive) {
+          if (angryGraceTimerRef.current) {
+            clearTimeout(angryGraceTimerRef.current);
+            angryGraceTimerRef.current = null;
+          }
+          setActiveAngryTriggerId(0);
+          completedAngryTriggerIdRef.current = packetAngryTriggerId;
+          setCompletedAngryTriggerId(packetAngryTriggerId);
+        } else if (packet.angryActive && packetAngryTriggerId > 0) {
+          if (angryGraceTimerRef.current) {
+            clearTimeout(angryGraceTimerRef.current);
+            angryGraceTimerRef.current = null;
+          }
+          // If a GOAL celebration was in its short grace tail, finalize it immediately so ANGRY starts cleanly
+          if (goalGraceTimerRef.current) {
+            clearTimeout(goalGraceTimerRef.current);
+            goalGraceTimerRef.current = null;
+            completedGoalTriggerIdRef.current = packetTriggerId;
+            setCompletedGoalTriggerId(packetTriggerId);
+            setActiveGoalTriggerId(0);
+          }
+          if (packetAngryTriggerId !== completedAngryTriggerIdRef.current) {
+            setActiveAngryTriggerId(packetAngryTriggerId);
+          }
+        } else if (!packet.angryActive && packetAngryTriggerId > 0) {
+          if (
+            completedAngryTriggerIdRef.current !== packetAngryTriggerId &&
+            !angryGraceTimerRef.current
+          ) {
+            angryGraceTimerRef.current = window.setTimeout(() => {
+              angryGraceTimerRef.current = null;
+              completedAngryTriggerIdRef.current = packetAngryTriggerId;
+              setCompletedAngryTriggerId(packetAngryTriggerId);
+              setActiveAngryTriggerId(0);
             }, 450);
           }
         }
@@ -217,6 +269,7 @@ export const CleanOutputView: React.FC = () => {
       clearTimeout(t1);
       clearTimeout(t2);
       if (goalGraceTimerRef.current) clearTimeout(goalGraceTimerRef.current);
+      if (angryGraceTimerRef.current) clearTimeout(angryGraceTimerRef.current);
       if (reconnectIntervalRef.current) clearInterval(reconnectIntervalRef.current);
       document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
       window.removeEventListener('focus', handleVisibilityOrFocus);
@@ -337,10 +390,15 @@ export const CleanOutputView: React.FC = () => {
   const isGoalVoiceEnabled = Boolean(syncState.goalVoiceEnabled);
   const currentTriggerId = syncState.goalTriggerId ?? activeGoalTriggerId;
   const isGoalActiveInOutput =
-    isGoalVoiceEnabled &&
     currentTriggerId > 0 &&
     currentTriggerId !== completedGoalTriggerId &&
     (Boolean(syncState.goalActive) || activeGoalTriggerId === currentTriggerId);
+
+  const currentAngryTriggerId = syncState.angryTriggerId ?? activeAngryTriggerId;
+  const isAngryActiveInOutput =
+    currentAngryTriggerId > 0 &&
+    currentAngryTriggerId !== completedAngryTriggerId &&
+    (Boolean(syncState.angryActive) || activeAngryTriggerId === currentAngryTriggerId);
 
   // Pure, clean synchronized output for TikTok LIVE Studio Window Capture
   return (
@@ -373,6 +431,18 @@ export const CleanOutputView: React.FC = () => {
           completedGoalTriggerIdRef.current = endedId;
           setCompletedGoalTriggerId(endedId);
           setActiveGoalTriggerId(0);
+        }}
+        angryActive={isAngryActiveInOutput}
+        angryTriggerId={currentAngryTriggerId}
+        angryNonVideoDurationMs={syncState.angryNonVideoDurationMs ?? 3000}
+        onAngryPlaybackEnded={(endedId) => {
+          if (angryGraceTimerRef.current) {
+            clearTimeout(angryGraceTimerRef.current);
+            angryGraceTimerRef.current = null;
+          }
+          completedAngryTriggerIdRef.current = endedId;
+          setCompletedAngryTriggerId(endedId);
+          setActiveAngryTriggerId(0);
         }}
         isCleanOutput={true}
       />

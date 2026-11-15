@@ -14,6 +14,7 @@ import {
   GoalResolvedEngine,
   GoalSpeechStatus,
   AudioInputDeviceInfo,
+  SpecialReactionType,
 } from '../types/vtuber';
 import { STADIUM_ASSETS } from '../utils/stadiumAssets';
 import { CHARACTER_SLOTS, inferMediaType, resolveCharacterMediaUrls } from '../utils/avatarMedia';
@@ -113,10 +114,14 @@ interface ControlPanelProps {
   dualSettings: DualHostSettings;
   onUpdateDualSettings: (newSettings: Partial<DualHostSettings>) => void;
 
-  // GOAL con la voce
+  // Comandi Vocali Live (GOAL & Reazione Arrabbiata su riconoscitore condiviso)
   goalVoiceEnabled: boolean;
   onToggleGoalVoice: () => void;
   goalActive: boolean;
+  angryVoiceEnabled: boolean;
+  onToggleAngryVoice: () => void;
+  angryActive: boolean;
+  queuedReactionType: SpecialReactionType | null;
   goalSpeechStatus: GoalSpeechStatus;
   goalEnginePreference: GoalEnginePreference;
   goalResolvedEngine: GoalResolvedEngine;
@@ -124,11 +129,18 @@ interface ControlPanelProps {
   onChangeGoalEngine: (pref: GoalEnginePreference) => void;
   goalSpeechSupported: boolean;
   goalLastTranscript: string;
+  detectedCommandLabel: string;
   goalLastEvent: string;
   goalSpeechError: string | null;
+  angryWarningMessage: string | null;
   goalCooldownSeconds: number;
   onChangeGoalCooldown: (sec: number) => void;
   goalCooldownRemainingMs: number;
+  angryCooldownSeconds: number;
+  onChangeAngryCooldown: (sec: number) => void;
+  angryCooldownRemainingMs: number;
+  angryNonVideoDurationSeconds: number;
+  onChangeAngryNonVideoDuration: (sec: number) => void;
   availableMics: AudioInputDeviceInfo[];
   selectedGoalMicId: string;
   onSelectGoalMic: (micId: string) => void;
@@ -139,6 +151,8 @@ interface ControlPanelProps {
   onRemoveVoskModel: () => void;
   hasMouthASlot: boolean;
   onTestGoalTrigger: () => void;
+  hasAngryReactionSlot: boolean;
+  onTestAngryTrigger: () => void;
 
   // Layout Lock & Clean Output Actions
   isLayoutLocked: boolean;
@@ -193,6 +207,10 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
   goalVoiceEnabled,
   onToggleGoalVoice,
   goalActive,
+  angryVoiceEnabled,
+  onToggleAngryVoice,
+  angryActive,
+  queuedReactionType,
   goalSpeechStatus,
   goalEnginePreference,
   goalResolvedEngine,
@@ -200,11 +218,18 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
   onChangeGoalEngine,
   goalSpeechSupported,
   goalLastTranscript,
+  detectedCommandLabel,
   goalLastEvent,
   goalSpeechError,
+  angryWarningMessage,
   goalCooldownSeconds,
   onChangeGoalCooldown,
   goalCooldownRemainingMs,
+  angryCooldownSeconds,
+  onChangeAngryCooldown,
+  angryCooldownRemainingMs,
+  angryNonVideoDurationSeconds,
+  onChangeAngryNonVideoDuration,
   availableMics,
   selectedGoalMicId,
   onSelectGoalMic,
@@ -215,6 +240,8 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
   onRemoveVoskModel,
   hasMouthASlot,
   onTestGoalTrigger,
+  hasAngryReactionSlot,
+  onTestAngryTrigger,
   isLayoutLocked,
   onToggleLayoutLock,
   onOpenPopoutWindow,
@@ -458,13 +485,13 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
         )}
       </div>
 
-      {/* 1B. MODALITÀ GOAL CON LA VOCE */}
-      <div className="bg-zinc-900/90 border border-zinc-800 rounded-2xl p-4 shadow-xl space-y-3">
+      {/* 1B. COMANDI VOCALI LIVE (GOAL & REAZIONE ARRABBIATA SU UN SOLO RICONOSCITORE) */}
+      <div className="bg-zinc-900/90 border border-zinc-800 rounded-2xl p-4 shadow-xl space-y-3.5">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <div
               className={`w-8 h-8 rounded-lg border flex items-center justify-center ${
-                goalVoiceEnabled
+                goalVoiceEnabled || angryVoiceEnabled
                   ? 'bg-amber-500/20 border-amber-500/50 text-amber-400'
                   : 'bg-zinc-800/80 border-zinc-700 text-zinc-400'
               }`}
@@ -474,51 +501,23 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="text-sm font-bold text-white uppercase tracking-wider">
-                  GOAL con la voce
+                  Comandi Vocali Live
                 </h3>
                 <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 border border-zinc-700">
                   {goalResolvedEngine === 'vosk' ? 'Vosk Offline' : 'Web Speech'}
                 </span>
               </div>
               <p className="text-[11px] text-zinc-400">
-                Attiva <strong className="text-zinc-200">BOCCA A</strong> solo dicendo &quot;GOL&quot;, &quot;GOAL&quot; o &quot;GOOOL&quot;
+                Un solo riconoscitore condiviso per <strong className="text-zinc-200">GOAL</strong> e{' '}
+                <strong className="text-zinc-200">&ldquo;ma vaffanculo&rdquo;</strong>
               </p>
             </div>
           </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={onTestGoalTrigger}
-              disabled={!hasMouthASlot}
-              title="Simula il comando vocale GOAL per verificare la riproduzione dall'inizio"
-              className="px-2.5 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 text-amber-300 border border-zinc-700 text-[11px] font-bold transition"
-            >
-              Test GOAL
-            </button>
-
-            <button
-              type="button"
-              onClick={onToggleGoalVoice}
-              disabled={
-                !goalVoiceEnabled &&
-                goalResolvedEngine === 'webspeech' &&
-                !goalSpeechSupported
-              }
-              className={`px-3.5 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition shadow-lg ${
-                goalVoiceEnabled
-                  ? 'bg-amber-500 hover:bg-amber-400 text-black shadow-amber-500/25 ring-2 ring-amber-400/50'
-                  : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed'
-              }`}
-            >
-              {goalVoiceEnabled ? 'ATTIVO' : 'DISATTIVO'}
-            </button>
-          </div>
         </div>
 
-        {/* Stato separato e reale del riconoscimento vocale */}
+        {/* Stato separato e reale del riconoscimento vocale condiviso */}
         <div className="flex flex-wrap items-center justify-between gap-2 bg-zinc-950/75 border border-zinc-800/90 rounded-xl px-3 py-2">
-          <div className="flex items-center gap-2 text-[11px]">
+          <div className="flex flex-wrap items-center gap-2 text-[11px]">
             {(() => {
               const isErrorState =
                 goalSpeechStatus === 'model_unavailable' ||
@@ -527,10 +526,16 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
                 goalSpeechStatus === 'unsupported' ||
                 goalSpeechStatus === 'error';
 
-              const statusBadge = goalActive
+              const statusBadge = angryActive
                 ? {
                     cls: 'bg-red-600/30 border-red-500 text-red-200 animate-pulse',
                     dot: 'bg-red-400',
+                    label: 'REAZIONE ARRABBIATA IN RIPRODUZIONE!',
+                  }
+                : goalActive
+                ? {
+                    cls: 'bg-amber-600/30 border-amber-500 text-amber-200 animate-pulse',
+                    dot: 'bg-amber-400',
                     label: 'GOAL IN RIPRODUZIONE!',
                   }
                 : isErrorState
@@ -563,7 +568,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
                 : {
                     cls: 'bg-zinc-900 border-zinc-700 text-zinc-400',
                     dot: 'bg-zinc-500',
-                    label: 'Disattivo',
+                    label: 'Disattivo (mic libero)',
                   };
 
               return (
@@ -576,9 +581,9 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
               );
             })()}
 
-            {goalCooldownRemainingMs > 0 && (
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-950/60 border border-amber-600/40 text-amber-300">
-                Pausa: {Math.ceil(goalCooldownRemainingMs / 1000)}s
+            {queuedReactionType && (
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-zinc-800 border border-zinc-600 text-zinc-200">
+                In attesa: {queuedReactionType === 'goal' ? 'GOAL' : 'REAZIONE ARRABBIATA'}
               </span>
             )}
           </div>
@@ -589,10 +594,187 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
           </span>
         </div>
 
-        {/* Motore di riconoscimento vocale */}
+        {/* Scheda Comando 1: GOAL con la voce */}
+        <div className="p-3 rounded-xl bg-zinc-950/75 border border-zinc-800 space-y-2.5">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <Trophy className="w-4 h-4 text-amber-400 shrink-0" />
+              <div className="min-w-0">
+                <span className="text-xs font-bold text-white block truncate">
+                  GOAL con la voce (BOCCA A)
+                </span>
+                <span className="text-[10px] text-zinc-400 block truncate">
+                  Parole: &ldquo;GOL&rdquo;, &ldquo;GOAL&rdquo;, &ldquo;GOOOL&rdquo;
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={onTestGoalTrigger}
+                disabled={!hasMouthASlot}
+                title="Simula il comando vocale GOAL per verificare la riproduzione dall'inizio"
+                className="px-2.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 text-amber-300 border border-zinc-700 text-[11px] font-bold transition"
+              >
+                Test GOAL
+              </button>
+
+              <button
+                type="button"
+                onClick={onToggleGoalVoice}
+                disabled={
+                  !goalVoiceEnabled &&
+                  !angryVoiceEnabled &&
+                  goalResolvedEngine === 'webspeech' &&
+                  !goalSpeechSupported
+                }
+                className={`px-3 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wider transition shadow ${
+                  goalVoiceEnabled
+                    ? 'bg-amber-500 hover:bg-amber-400 text-black shadow-amber-500/25 ring-1 ring-amber-400'
+                    : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed'
+                }`}
+              >
+                {goalVoiceEnabled ? 'ATTIVO' : 'DISATTIVO'}
+              </button>
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <div className="flex items-center justify-between text-[11px]">
+              <span className="text-zinc-400">Intervallo minimo GOAL</span>
+              <div className="flex items-center gap-1.5">
+                {goalCooldownRemainingMs > 0 && (
+                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-950/60 border border-amber-600/40 text-amber-300">
+                    Pausa: {Math.ceil(goalCooldownRemainingMs / 1000)}s
+                  </span>
+                )}
+                <span className="font-mono text-amber-300 font-bold">{goalCooldownSeconds}s</span>
+              </div>
+            </div>
+            <input
+              type="range"
+              min="1"
+              max="15"
+              step="1"
+              value={goalCooldownSeconds}
+              onChange={(e) => onChangeGoalCooldown(Number(e.target.value))}
+              className="w-full accent-amber-500 cursor-pointer"
+            />
+          </div>
+
+          {goalVoiceEnabled && !hasMouthASlot && (
+            <div className="p-2 rounded-lg bg-amber-950/50 border border-amber-500/40 text-[10px] text-amber-200">
+              Questo personaggio non ha un file caricato nello slot <strong>BOCCA A</strong>.
+            </div>
+          )}
+        </div>
+
+        {/* Scheda Comando 2: REAZIONE ARRABBIATA — “MA VAFFANCULO” */}
+        <div className="p-3 rounded-xl bg-zinc-950/75 border border-zinc-800 space-y-2.5">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <Flame className="w-4 h-4 text-red-400 shrink-0" />
+              <div className="min-w-0">
+                <span className="text-xs font-bold text-white block truncate">
+                  Reazione Arrabbiata
+                </span>
+                <span className="text-[10px] text-zinc-400 block truncate">
+                  Frase esatta: &ldquo;ma vaffanculo&rdquo;
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={onTestAngryTrigger}
+                title='Simula la frase "ma vaffanculo" per verificare la reazione arrabbiata'
+                className="px-2.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-red-300 border border-zinc-700 text-[11px] font-bold transition"
+              >
+                Test reazione arrabbiata
+              </button>
+
+              <button
+                type="button"
+                onClick={onToggleAngryVoice}
+                disabled={
+                  !angryVoiceEnabled &&
+                  !goalVoiceEnabled &&
+                  goalResolvedEngine === 'webspeech' &&
+                  !goalSpeechSupported
+                }
+                className={`px-3 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wider transition shadow ${
+                  angryVoiceEnabled
+                    ? 'bg-red-600 hover:bg-red-500 text-white shadow-red-600/25 ring-1 ring-red-400'
+                    : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed'
+                }`}
+              >
+                {angryVoiceEnabled ? 'ATTIVO' : 'DISATTIVO'}
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="text-zinc-400">Intervallo minimo</span>
+                <div className="flex items-center gap-1.5">
+                  {angryCooldownRemainingMs > 0 && (
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-red-950/60 border border-red-600/40 text-red-300">
+                      Pausa: {Math.ceil(angryCooldownRemainingMs / 1000)}s
+                    </span>
+                  )}
+                  <span className="font-mono text-red-300 font-bold">{angryCooldownSeconds}s</span>
+                </div>
+              </div>
+              <input
+                type="range"
+                min="1"
+                max="15"
+                step="1"
+                value={angryCooldownSeconds}
+                onChange={(e) => onChangeAngryCooldown(Number(e.target.value))}
+                className="w-full accent-red-500 cursor-pointer"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="text-zinc-400">Durata se PNG / GIF</span>
+                <span className="font-mono text-zinc-200 font-bold">
+                  {angryNonVideoDurationSeconds}s
+                </span>
+              </div>
+              <input
+                type="range"
+                min="1"
+                max="10"
+                step="1"
+                value={angryNonVideoDurationSeconds}
+                onChange={(e) => onChangeAngryNonVideoDuration(Number(e.target.value))}
+                className="w-full accent-zinc-400 cursor-pointer"
+              />
+            </div>
+          </div>
+
+          {!hasAngryReactionSlot && (
+            <div className="p-2 rounded-lg bg-zinc-900 border border-zinc-800 text-[10px] text-zinc-400">
+              Slot facoltativo <strong className="text-zinc-200">REAZIONE ARRABBIATA — &ldquo;MA VAFFANCULO&rdquo;</strong> non caricato su questo personaggio (aggiungilo in <strong>Gestisci / Carica PNG</strong>).
+            </div>
+          )}
+
+          {angryWarningMessage && (
+            <div className="p-2 rounded-lg bg-amber-950/60 border border-amber-500/50 text-[11px] text-amber-200">
+              {angryWarningMessage}
+            </div>
+          )}
+        </div>
+
+        {/* Motore di riconoscimento vocale condiviso */}
         <div className="space-y-1.5">
           <label className="text-[11px] font-semibold text-zinc-300 block">
-            Motore Riconoscimento Vocale
+            Motore Riconoscimento Vocale (Condiviso)
           </label>
           <div className="grid grid-cols-3 gap-1.5">
             {(
@@ -622,7 +804,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
         <div className="space-y-1.5">
           <div className="flex items-center justify-between">
             <label className="text-[11px] font-semibold text-zinc-300">
-              Microfono per riconoscimento GOAL
+              Microfono Condiviso (GOAL &amp; Reazione Arrabbiata)
             </label>
             <button
               type="button"
@@ -656,31 +838,9 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
               </strong>
             </span>
             <span className="text-zinc-500">
-              Acquisizione condivisa e muta in altoparlanti: non interrompe il microfono di TikTok LIVE Studio.
+              Un solo ascolto condiviso e muto negli altoparlanti: non interrompe TikTok LIVE Studio.
             </span>
           </div>
-        </div>
-
-        {/* Intervallo minimo tra due attivazioni */}
-        <div className="space-y-1">
-          <div className="flex items-center justify-between text-[11px]">
-            <span className="font-semibold text-zinc-300">
-              Intervallo minimo tra attivazioni
-            </span>
-            <span className="font-mono text-amber-300 font-bold">{goalCooldownSeconds}s</span>
-          </div>
-          <input
-            type="range"
-            min="1"
-            max="15"
-            step="1"
-            value={goalCooldownSeconds}
-            onChange={(e) => onChangeGoalCooldown(Number(e.target.value))}
-            className="w-full accent-amber-500 cursor-pointer"
-          />
-          <p className="text-[10px] text-zinc-500">
-            Riduce ripetizioni ravvicinate dopo un GOAL (il riconoscimento vocale può comunque avere occasionali falsi rilevamenti).
-          </p>
         </div>
 
         {/* Modello Offline Vosk (.tar.gz) */}
@@ -745,20 +905,28 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
           </div>
         )}
 
-        {/* Area testo riconosciuto / ultimo evento solo nel pannello di controllo */}
-        {(goalLastTranscript || goalLastEvent) && (
+        {/* Area testo riconosciuto / comando rilevato solo nel pannello di controllo */}
+        {(goalLastTranscript || detectedCommandLabel || goalLastEvent) && (
           <div className="text-[11px] rounded-xl px-3 py-2 bg-zinc-950/90 border border-zinc-800 space-y-1">
             {goalLastTranscript && (
               <div className="flex items-center justify-between gap-2">
-                <span className="text-zinc-500">Testo rilevato:</span>
+                <span className="text-zinc-500">Testo riconosciuto:</span>
                 <span className="font-mono text-zinc-200 truncate max-w-[220px]" title={goalLastTranscript}>
                   &ldquo;{goalLastTranscript}&rdquo;
                 </span>
               </div>
             )}
+            {detectedCommandLabel && (
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-zinc-500">Comando rilevato:</span>
+                <span className="font-mono text-emerald-300 font-bold truncate max-w-[220px]" title={detectedCommandLabel}>
+                  {detectedCommandLabel}
+                </span>
+              </div>
+            )}
             {goalLastEvent && (
               <div className="flex items-center justify-between gap-2">
-                <span className="text-zinc-500">Ultimo evento:</span>
+                <span className="text-zinc-500">Stato esecuzione:</span>
                 <span className="font-mono text-amber-300 truncate max-w-[220px]" title={goalLastEvent}>
                   {goalLastEvent}
                 </span>
@@ -770,24 +938,17 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
         <div className="text-[10px] rounded-xl px-3 py-2 bg-zinc-950/60 border border-zinc-800/80 text-zinc-400 leading-relaxed">
           {goalVoiceEnabled ? (
             <>
-              <strong className="text-amber-300">Modalità GOAL attiva:</strong> apertura normale della
+              <strong className="text-amber-300">GOAL vocale attivo:</strong> apertura normale della
               bocca e vocali non attivano BOCCA A. <strong className="text-zinc-200">SILENT</strong> e{' '}
               <strong className="text-zinc-200">SPEAKING</strong> continuano a seguire la webcam.
             </>
           ) : (
             <>
-              Modalità disattivata: <strong className="text-zinc-200">BOCCA A</strong> segue
+              GOAL vocale disattivato: <strong className="text-zinc-200">BOCCA A</strong> segue
               normalmente l&apos;apertura ampia della bocca dalla webcam.
             </>
           )}
         </div>
-
-        {goalVoiceEnabled && !hasMouthASlot && (
-          <div className="p-2.5 rounded-xl bg-amber-950/50 border border-amber-500/40 text-[11px] text-amber-200">
-            Questo personaggio non ha ancora un file caricato nello slot <strong>BOCCA A</strong>.
-            Carica un video o immagine GOAL in <strong>Gestisci / Carica PNG</strong>.
-          </div>
-        )}
 
         {goalSpeechError && (
           <div className="p-2.5 rounded-xl bg-red-950/75 border border-red-500/70 text-[11px] text-red-200 leading-relaxed">

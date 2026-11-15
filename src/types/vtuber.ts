@@ -4,7 +4,8 @@ export type CharacterSlotKey =
   | 'mouthA'
   | 'mouthE'
   | 'mouthO'
-  | 'eyesClosed';
+  | 'eyesClosed'
+  | 'angryReaction';
 
 export type AvatarMediaType = 'image' | 'gif' | 'video';
 
@@ -20,12 +21,13 @@ export interface MediaValidationInfo {
 }
 
 export interface CharacterImages {
-  silent: string;      // Base64 PNG/GIF or image URL - Closed mouth
-  speaking: string;    // Base64 PNG/GIF or image URL - Open mouth
-  mouthA?: string;     // Optional open 'A' mouth
-  mouthE?: string;     // Optional open 'E' mouth
-  mouthO?: string;     // Optional open 'O' mouth
-  eyesClosed?: string; // Optional closed eyes (blink)
+  silent: string;         // Base64 PNG/GIF or image URL - Closed mouth
+  speaking: string;       // Base64 PNG/GIF or image URL - Open mouth
+  mouthA?: string;        // Optional open 'A' mouth
+  mouthE?: string;        // Optional open 'E' mouth
+  mouthO?: string;        // Optional open 'O' mouth
+  eyesClosed?: string;    // Optional closed eyes (blink)
+  angryReaction?: string; // Optional angry reaction ("ma vaffanculo")
 }
 
 export interface Character {
@@ -133,3 +135,5 @@ export interface AudioInputDeviceInfo {
   deviceId: string;
   label: string;
 }
+
+export type SpecialReactionType = 'goal' | 'angry';

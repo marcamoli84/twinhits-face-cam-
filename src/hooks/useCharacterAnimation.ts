@@ -20,6 +20,7 @@ interface AnimationResult {
 interface CharacterAnimationOptions {
   goalVoiceEnabled?: boolean;
   goalActive?: boolean;
+  angryActive?: boolean;
 }
 
 export function useCharacterAnimation(
@@ -30,6 +31,7 @@ export function useCharacterAnimation(
 ): AnimationResult {
   const goalVoiceEnabled = Boolean(options?.goalVoiceEnabled);
   const goalActive = Boolean(options?.goalActive);
+  const angryActive = Boolean(options?.angryActive);
 
   // Store smoothed state across frames
   const smoothedState = useRef({
@@ -107,8 +109,13 @@ export function useCharacterAnimation(
   const activeSlot: CharacterSlotKey = useMemo(() => {
     if (!character) return 'silent';
 
-    // When "GOAL con la voce" is enabled, mouthA plays ONLY while goalActive is true
-    if (goalVoiceEnabled && goalActive && hasCharacterSlot(character, 'mouthA')) {
+    // Angry reaction ("ma vaffanculo") plays once when active
+    if (angryActive && hasCharacterSlot(character, 'angryReaction')) {
+      return 'angryReaction';
+    }
+
+    // GOAL celebration plays mouthA once when active (both voice GOAL and manual Test GOAL)
+    if (goalActive && hasCharacterSlot(character, 'mouthA')) {
       return 'mouthA';
     }
 
@@ -144,6 +151,7 @@ export function useCharacterAnimation(
     return hasCharacterSlot(character, 'speaking') ? 'speaking' : 'silent';
   }, [
     character,
+    angryActive,
     goalVoiceEnabled,
     goalActive,
     isSpeaking,

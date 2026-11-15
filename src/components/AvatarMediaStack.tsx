@@ -9,8 +9,13 @@ interface AvatarMediaStackProps {
   mediaClassName?: string;
   isPlaying?: boolean;
   goalVoiceEnabled?: boolean;
+  goalActive?: boolean;
   goalTriggerId?: number;
   onGoalPlaybackEnded?: (triggerId: number) => void;
+  angryActive?: boolean;
+  angryTriggerId?: number;
+  angryNonVideoDurationMs?: number;
+  onAngryPlaybackEnded?: (triggerId: number) => void;
   onVideoRuntimeError?: (slot: CharacterSlotKey, message: string) => void;
 }
 
@@ -38,6 +43,8 @@ const SlotVideoLayer: React.FC<SlotVideoLayerProps> = ({
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const wasActiveRef = useRef<boolean>(false);
   const lastRestartNonceRef = useRef<number>(restartNonce);
+  const onEndedRef = useRef(onEnded);
+  onEndedRef.current = onEnded;
 
   useEffect(() => {
     const el = videoRef.current;
@@ -59,7 +66,7 @@ const SlotVideoLayer: React.FC<SlotVideoLayerProps> = ({
       return;
     }
 
-    // One-shot GOAL playback mode:
+    // One-shot playback mode (GOAL or Reazione Arrabbiata):
     // Keep cued at t=0 when inactive; start from t=0 on activation or new triggerId.
     const becameActive = isActive && !wasActiveRef.current;
     const retriggered = isActive && restartNonce !== lastRestartNonceRef.current;
@@ -83,13 +90,13 @@ const SlotVideoLayer: React.FC<SlotVideoLayerProps> = ({
         // ignore seek errors before metadata loads
       }
       el.play().catch(() => {
-        // If playback is blocked or fails to start, release GOAL state safely
-        onEnded?.();
+        // If playback is blocked or fails to start, release one-shot state safely
+        onEndedRef.current?.();
       });
     } else if (el.paused && !el.ended) {
       el.play().catch(() => {});
     }
-  }, [src, isActive, isPlaying, loopPlayback, restartNonce, onEnded]);
+  }, [src, isActive, isPlaying, loopPlayback, restartNonce]);
 
   return (
     <video
@@ -112,7 +119,7 @@ const SlotVideoLayer: React.FC<SlotVideoLayerProps> = ({
               // ignore
             }
           }
-          onEnded?.();
+          onEndedRef.current?.();
         }
       }}
       onError={onError}
@@ -138,8 +145,13 @@ export const AvatarMediaStack: React.FC<AvatarMediaStackProps> = ({
   mediaClassName = '',
   isPlaying = true,
   goalVoiceEnabled = false,
+  goalActive = false,
   goalTriggerId = 0,
   onGoalPlaybackEnded,
+  angryActive = false,
+  angryTriggerId = 0,
+  angryNonVideoDurationMs = 3000,
+  onAngryPlaybackEnded,
   onVideoRuntimeError,
 }) => {
   const [erroredSlots, setErroredSlots] = useState<Partial<Record<CharacterSlotKey, boolean>>>({});
@@ -170,9 +182,16 @@ export const AvatarMediaStack: React.FC<AvatarMediaStackProps> = ({
 
   const activeEntry = slotEntries.find((e) => e.slot === effectiveSlot);
   const isOneShotGoalNonVideo =
-    Boolean(goalVoiceEnabled) &&
+    (Boolean(goalVoiceEnabled) || Boolean(goalActive)) &&
     effectiveSlot === 'mouthA' &&
     goalTriggerId > 0 &&
+    Boolean(activeEntry) &&
+    activeEntry?.mediaType !== 'video';
+
+  const isOneShotAngryNonVideo =
+    Boolean(angryActive) &&
+    effectiveSlot === 'angryReaction' &&
+    angryTriggerId > 0 &&
     Boolean(activeEntry) &&
     activeEntry?.mediaType !== 'video';
 
@@ -185,6 +204,16 @@ export const AvatarMediaStack: React.FC<AvatarMediaStackProps> = ({
     return () => clearTimeout(timer);
   }, [isOneShotGoalNonVideo, goalTriggerId, onGoalPlaybackEnded]);
 
+  // If angryReaction holds a GIF/PNG instead of a video, auto-return after the configured duration
+  useEffect(() => {
+    if (!isOneShotAngryNonVideo || !onAngryPlaybackEnded) return;
+    const duration = Math.max(500, Math.min(15000, angryNonVideoDurationMs || 3000));
+    const timer = window.setTimeout(() => {
+      onAngryPlaybackEnded(angryTriggerId);
+    }, duration);
+    return () => clearTimeout(timer);
+  }, [isOneShotAngryNonVideo, angryTriggerId, angryNonVideoDurationMs, onAngryPlaybackEnded]);
+
   if (!character || slotEntries.length === 0) return null;
 
   const sharedLayerClass = `absolute inset-0 w-full h-full max-h-full max-w-full object-contain pointer-events-none select-none ${mediaClassName}`;
@@ -193,26 +222,38 @@ export const AvatarMediaStack: React.FC<AvatarMediaStackProps> = ({
     <div className="relative w-full h-full flex items-center justify-center pointer-events-none">
       {slotEntries.map(({ slot, src, mediaType }) => {
         const isActive = slot === effectiveSlot;
-        const isGoalMouthSlot = Boolean(goalVoiceEnabled) && slot === 'mouthA';
+        const isGoalOneShotSlot = (Boolean(goalVoiceEnabled) || Boolean(goalActive)) && slot === 'mouthA';
+        const isAngryOneShotSlot = slot === 'angryReaction';
+        const isOneShotSlot = isGoalOneShotSlot || isAngryOneShotSlot;
 
         if (mediaType === 'video') {
+          const triggerNonce = isAngryOneShotSlot
+            ? angryTriggerId
+            : isGoalOneShotSlot
+            ? goalTriggerId
+            : 0;
+
           return (
             <SlotVideoLayer
               key={`${slot}-${src}`}
               src={src}
               isActive={isActive}
               isPlaying={isPlaying}
-              loopPlayback={!isGoalMouthSlot}
-              restartNonce={isGoalMouthSlot ? goalTriggerId : 0}
+              loopPlayback={!isOneShotSlot}
+              restartNonce={triggerNonce}
               className={sharedLayerClass}
               onEnded={
-                isGoalMouthSlot && onGoalPlaybackEnded
+                isAngryOneShotSlot && onAngryPlaybackEnded
+                  ? () => onAngryPlaybackEnded(angryTriggerId)
+                  : isGoalOneShotSlot && onGoalPlaybackEnded
                   ? () => onGoalPlaybackEnded(goalTriggerId)
                   : undefined
               }
               onError={() => {
                 setErroredSlots((prev) => ({ ...prev, [slot]: true }));
-                if (isGoalMouthSlot && isActive) {
+                if (isAngryOneShotSlot && isActive) {
+                  onAngryPlaybackEnded?.(angryTriggerId);
+                } else if (isGoalOneShotSlot && isActive) {
                   onGoalPlaybackEnded?.(goalTriggerId);
                 }
                 onVideoRuntimeError?.(
@@ -225,7 +266,9 @@ export const AvatarMediaStack: React.FC<AvatarMediaStackProps> = ({
         }
 
         const imgKey =
-          isGoalMouthSlot && mediaType === 'gif' && isActive && goalTriggerId > 0
+          isAngryOneShotSlot && mediaType === 'gif' && isActive && angryTriggerId > 0
+            ? `${slot}-angry-${angryTriggerId}-${src.slice(0, 48)}`
+            : isGoalOneShotSlot && mediaType === 'gif' && isActive && goalTriggerId > 0
             ? `${slot}-goal-${goalTriggerId}-${src.slice(0, 48)}`
             : `${slot}-${src.slice(0, 64)}`;
 

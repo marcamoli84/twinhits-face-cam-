@@ -36,6 +36,10 @@ interface AvatarCanvasProps {
   goalActive?: boolean;
   goalTriggerId?: number;
   onGoalPlaybackEnded?: (triggerId: number) => void;
+  angryActive?: boolean;
+  angryTriggerId?: number;
+  angryNonVideoDurationMs?: number;
+  onAngryPlaybackEnded?: (triggerId: number) => void;
   isCleanOutput?: boolean; // When true, zero badges, guides, or UI outlines are shown
 }
 
@@ -79,13 +83,17 @@ export const AvatarCanvas: React.FC<AvatarCanvasProps> = ({
   goalActive = false,
   goalTriggerId = 0,
   onGoalPlaybackEnded,
+  angryActive = false,
+  angryTriggerId = 0,
+  angryNonVideoDurationMs = 3000,
+  onAngryPlaybackEnded,
   isCleanOutput = false,
 }) => {
   const { activeSlot, isSpeaking, transformStyle } = useCharacterAnimation(
     character,
     faceData,
     settings,
-    { goalVoiceEnabled, goalActive }
+    { goalVoiceEnabled, goalActive, angryActive }
   );
 
   // Fixed logical stage dimensions: 720x1280 (9:16 vertical) or 1280x720 (16:9 horizontal)
@@ -141,7 +149,8 @@ export const AvatarCanvas: React.FC<AvatarCanvasProps> = ({
     hasCharacterSlot(character, 'eyesClosed') ||
     hasCharacterSlot(character, 'mouthA') ||
     hasCharacterSlot(character, 'mouthE') ||
-    hasCharacterSlot(character, 'mouthO');
+    hasCharacterSlot(character, 'mouthO') ||
+    hasCharacterSlot(character, 'angryReaction');
 
   const isGreenScreen = backgroundMode === 'green';
   const hasStadiumPreset = Boolean(stadiumBgSettings && stadiumBgSettings.preset !== 'none');
@@ -359,8 +368,13 @@ export const AvatarCanvas: React.FC<AvatarCanvasProps> = ({
                     activeSlot={activeSlot}
                     resolvedMediaUrls={resolvedAvatarMediaUrls}
                     goalVoiceEnabled={goalVoiceEnabled}
+                    goalActive={goalActive}
                     goalTriggerId={goalTriggerId}
                     onGoalPlaybackEnded={onGoalPlaybackEnded}
+                    angryActive={angryActive}
+                    angryTriggerId={angryTriggerId}
+                    angryNonVideoDurationMs={angryNonVideoDurationMs}
+                    onAngryPlaybackEnded={onAngryPlaybackEnded}
                     mediaClassName={
                       isGreenScreen
                         ? 'shadow-none filter-none'
@@ -472,8 +486,13 @@ export const AvatarCanvas: React.FC<AvatarCanvasProps> = ({
                         activeSlot={activeSlot}
                         resolvedMediaUrls={resolvedAvatarMediaUrls}
                         goalVoiceEnabled={goalVoiceEnabled}
+                        goalActive={goalActive}
                         goalTriggerId={goalTriggerId}
                         onGoalPlaybackEnded={onGoalPlaybackEnded}
+                        angryActive={angryActive}
+                        angryTriggerId={angryTriggerId}
+                        angryNonVideoDurationMs={angryNonVideoDurationMs}
+                        onAngryPlaybackEnded={onAngryPlaybackEnded}
                         mediaClassName={
                           isGreenScreen
                             ? 'shadow-none filter-none'

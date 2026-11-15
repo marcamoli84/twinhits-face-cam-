@@ -1,7 +1,11 @@
 import * as Vosk from 'vosk-browser';
 import type { KaldiRecognizer, Model } from 'vosk-browser';
 import { GoalSpeechStatus } from '../types/vtuber';
-import { countGoalMatches, GoalSpeechCallbacks } from './goalSpeechService';
+import {
+  countAngryPhraseMatches,
+  countGoalMatches,
+  GoalSpeechCallbacks,
+} from './goalSpeechService';
 import { loadVoskModelBlob } from './characterStorage';
 
 export const BUNDLED_VOSK_MODEL_PATHS = [
@@ -150,7 +154,9 @@ export class VoskGoalRecognizer {
   private isListening = false;
   private startSequence = 0;
   private handledPartialMatches = 0;
+  private handledAngryPartialMatches = 0;
   private lastGoalTriggerAt = 0;
+  private lastAngryTriggerAt = 0;
 
   constructor(callbacks: GoalSpeechCallbacks) {
     this.callbacks = callbacks;
@@ -226,6 +232,7 @@ export class VoskGoalRecognizer {
     const mySeq = ++this.startSequence;
     this.stopAudioOnly();
     this.handledPartialMatches = 0;
+    this.handledAngryPartialMatches = 0;
 
     if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
       this.emitFailure('unsupported', 'Acquisizione microfono non supportata in questo ambiente.');
@@ -325,6 +332,16 @@ export class VoskGoalRecognizer {
             this.callbacks.onGoalDetected(partial);
           }
         }
+
+        const angryMatches = countAngryPhraseMatches(partial);
+        if (angryMatches > this.handledAngryPartialMatches) {
+          this.handledAngryPartialMatches = angryMatches;
+          const now = performance.now();
+          if (now - this.lastAngryTriggerAt > 600) {
+            this.lastAngryTriggerAt = now;
+            this.callbacks.onAngryDetected?.(partial);
+          }
+        }
       });
 
       recognizer.on('result', (message) => {
@@ -332,6 +349,7 @@ export class VoskGoalRecognizer {
         if (message.event !== 'result') return;
         const text = (message.result?.text || '').trim();
         const matches = text ? countGoalMatches(text) : 0;
+        const angryMatches = text ? countAngryPhraseMatches(text) : 0;
 
         if (text) {
           this.callbacks.onTranscript?.(text, true);
@@ -344,8 +362,17 @@ export class VoskGoalRecognizer {
             this.callbacks.onGoalDetected(text);
           }
         }
-        // Reset utterance counter for the next spoken phrase
+
+        if (angryMatches > this.handledAngryPartialMatches) {
+          const now = performance.now();
+          if (now - this.lastAngryTriggerAt > 600) {
+            this.lastAngryTriggerAt = now;
+            this.callbacks.onAngryDetected?.(text);
+          }
+        }
+        // Reset utterance counters for the next spoken phrase
         this.handledPartialMatches = 0;
+        this.handledAngryPartialMatches = 0;
       });
 
       recognizer.on('error', (message) => {
@@ -473,6 +500,7 @@ export class VoskGoalRecognizer {
     this.startSequence++;
     this.stopAudioOnly();
     this.handledPartialMatches = 0;
+    this.handledAngryPartialMatches = 0;
     this.callbacks.onStatusChange?.('idle');
   }
 

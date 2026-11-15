@@ -21,6 +21,7 @@ interface LiveHUDProps {
   delegateMode: 'GPU' | 'CPU';
   goalVoiceEnabled?: boolean;
   goalActive?: boolean;
+  angryActive?: boolean;
   onRetryCamera?: () => void;
   onStartSimulation?: () => void;
   onOpenGuide?: () => void;
@@ -35,12 +36,15 @@ export const LiveHUD: React.FC<LiveHUDProps> = ({
   delegateMode,
   goalVoiceEnabled = false,
   goalActive = false,
+  angryActive = false,
   onRetryCamera,
   onStartSimulation,
   onOpenGuide,
 }) => {
   const mouthStateLabel =
-    goalVoiceEnabled && goalActive
+    angryActive
+      ? 'REAZIONE ARRABBIATA'
+      : goalActive
       ? 'GOAL!'
       : !faceData.detected
       ? 'SILENT'

@@ -19,6 +19,7 @@ import {
   GoalEnginePreference,
   GoalSpeechStatus,
   AudioInputDeviceInfo,
+  SpecialReactionType,
 } from './types/vtuber';
 import { DEFAULT_CHARACTERS } from './utils/defaultCharacters';
 import { CHARACTER_SLOTS, hasCharacterSlot, resolveCharacterMediaUrls } from './utils/avatarMedia';
@@ -255,11 +256,15 @@ function StudioMasterView() {
   const isLayoutLockedRef = useRef<boolean>(isLayoutLocked);
   isLayoutLockedRef.current = isLayoutLocked;
 
-  // "GOAL con la voce" state (Web Speech in Browser / Vosk Offline in Electron EXE)
+  // "GOAL con la voce" & "Reazione Arrabbiata" state (shared single recognizer)
   const isElectronEnv = isElectronDesktop();
   const [goalVoiceEnabled, setGoalVoiceEnabled] = useState<boolean>(false);
   const [goalActive, setGoalActive] = useState<boolean>(false);
   const [goalTriggerId, setGoalTriggerId] = useState<number>(0);
+  const [angryVoiceEnabled, setAngryVoiceEnabled] = useState<boolean>(false);
+  const [angryActive, setAngryActive] = useState<boolean>(false);
+  const [angryTriggerId, setAngryTriggerId] = useState<number>(0);
+  const [queuedReactionType, setQueuedReactionType] = useState<SpecialReactionType | null>(null);
   const [goalSpeechStatus, setGoalSpeechStatus] = useState<GoalSpeechStatus>('idle');
   const [goalEnginePreference, setGoalEnginePreference] = useState<GoalEnginePreference>(() => {
     try {
@@ -280,6 +285,25 @@ function StudioMasterView() {
     return 5;
   });
   const [goalCooldownRemainingMs, setGoalCooldownRemainingMs] = useState<number>(0);
+  const [angryCooldownSeconds, setAngryCooldownSeconds] = useState<number>(() => {
+    try {
+      const saved = Number(localStorage.getItem('twinhits_angry_cooldown_sec'));
+      if (!Number.isNaN(saved) && saved >= 1 && saved <= 15) return saved;
+    } catch {
+      // ignore
+    }
+    return 5;
+  });
+  const [angryCooldownRemainingMs, setAngryCooldownRemainingMs] = useState<number>(0);
+  const [angryNonVideoDurationSeconds, setAngryNonVideoDurationSeconds] = useState<number>(() => {
+    try {
+      const saved = Number(localStorage.getItem('twinhits_angry_nonvideo_sec'));
+      if (!Number.isNaN(saved) && saved >= 1 && saved <= 10) return saved;
+    } catch {
+      // ignore
+    }
+    return 3;
+  });
   const [availableMics, setAvailableMics] = useState<AudioInputDeviceInfo[]>([]);
   const [selectedGoalMicId, setSelectedGoalMicId] = useState<string>(() => {
     try {
@@ -297,8 +321,10 @@ function StudioMasterView() {
     }
   });
   const [goalLastTranscript, setGoalLastTranscript] = useState<string>('');
+  const [detectedCommandLabel, setDetectedCommandLabel] = useState<string>('');
   const [goalLastEvent, setGoalLastEvent] = useState<string>('');
   const [goalSpeechError, setGoalSpeechError] = useState<string | null>(null);
+  const [angryWarningMessage, setAngryWarningMessage] = useState<string | null>(null);
   const goalSpeechSupported = isGoalSpeechSupported();
   const goalResolvedEngine = resolveGoalEngine(goalEnginePreference);
 
@@ -492,17 +518,36 @@ function StudioMasterView() {
   goalActiveRef.current = goalActive;
   const goalTriggerIdRef = useRef<number>(goalTriggerId);
   goalTriggerIdRef.current = goalTriggerId;
+  const angryVoiceEnabledRef = useRef<boolean>(angryVoiceEnabled);
+  angryVoiceEnabledRef.current = angryVoiceEnabled;
+  const angryActiveRef = useRef<boolean>(angryActive);
+  angryActiveRef.current = angryActive;
+  const angryTriggerIdRef = useRef<number>(angryTriggerId);
+  angryTriggerIdRef.current = angryTriggerId;
   const goalEnginePreferenceRef = useRef<GoalEnginePreference>(goalEnginePreference);
   goalEnginePreferenceRef.current = goalEnginePreference;
   const goalCooldownSecondsRef = useRef<number>(goalCooldownSeconds);
   goalCooldownSecondsRef.current = goalCooldownSeconds;
+  const angryCooldownSecondsRef = useRef<number>(angryCooldownSeconds);
+  angryCooldownSecondsRef.current = angryCooldownSeconds;
+  const angryNonVideoDurationSecondsRef = useRef<number>(angryNonVideoDurationSeconds);
+  angryNonVideoDurationSecondsRef.current = angryNonVideoDurationSeconds;
   const selectedGoalMicIdRef = useRef<string>(selectedGoalMicId);
   selectedGoalMicIdRef.current = selectedGoalMicId;
   const lastVoiceGoalTriggerAtRef = useRef<number>(0);
+  const lastVoiceAngryTriggerAtRef = useRef<number>(0);
   const goalCooldownTimerRef = useRef<number | null>(null);
+  const angryCooldownTimerRef = useRef<number | null>(null);
   const goalSpeechRecognizerRef = useRef<GoalSpeechRecognizer | null>(null);
   const voskGoalRecognizerRef = useRef<VoskGoalRecognizer | null>(null);
+  const isSpeechRecognizerActiveRef = useRef<boolean>(false);
   const goalSafetyTimerRef = useRef<number | null>(null);
+  const angrySafetyTimerRef = useRef<number | null>(null);
+  const queuedReactionRef = useRef<{
+    type: SpecialReactionType;
+    sourceLabel: string;
+    fromVoice: boolean;
+  } | null>(null);
 
   // Initialize and load from IndexedDB on startup
   useEffect(() => {
@@ -535,6 +580,20 @@ function StudioMasterView() {
           cfg.goalCooldownSeconds <= 15
         ) {
           setGoalCooldownSeconds(cfg.goalCooldownSeconds);
+        }
+        if (
+          typeof cfg.angryCooldownSeconds === 'number' &&
+          cfg.angryCooldownSeconds >= 1 &&
+          cfg.angryCooldownSeconds <= 15
+        ) {
+          setAngryCooldownSeconds(cfg.angryCooldownSeconds);
+        }
+        if (
+          typeof cfg.angryNonVideoDurationSeconds === 'number' &&
+          cfg.angryNonVideoDurationSeconds >= 1 &&
+          cfg.angryNonVideoDurationSeconds <= 10
+        ) {
+          setAngryNonVideoDurationSeconds(cfg.angryNonVideoDurationSeconds);
         }
         if (typeof cfg.voskModelFileName === 'string') {
           setVoskModelFileName(cfg.voskModelFileName);
@@ -648,6 +707,10 @@ function StudioMasterView() {
         goalVoiceEnabled: goalVoiceEnabledRef.current,
         goalActive: goalActiveRef.current,
         goalTriggerId: goalTriggerIdRef.current,
+        angryVoiceEnabled: angryVoiceEnabledRef.current,
+        angryActive: angryActiveRef.current,
+        angryTriggerId: angryTriggerIdRef.current,
+        angryNonVideoDurationMs: angryNonVideoDurationSecondsRef.current * 1000,
       };
 
       syncManagerRef.current.broadcastState(packet);
@@ -706,6 +769,27 @@ function StudioMasterView() {
 
   useEffect(() => {
     try {
+      localStorage.setItem('twinhits_angry_cooldown_sec', String(angryCooldownSeconds));
+    } catch {
+      // ignore
+    }
+    saveAppConfig({ angryCooldownSeconds });
+  }, [angryCooldownSeconds]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        'twinhits_angry_nonvideo_sec',
+        String(angryNonVideoDurationSeconds)
+      );
+    } catch {
+      // ignore
+    }
+    saveAppConfig({ angryNonVideoDurationSeconds });
+  }, [angryNonVideoDurationSeconds]);
+
+  useEffect(() => {
+    try {
       localStorage.setItem('twinhits_goal_mic_id', selectedGoalMicId);
     } catch {
       // ignore
@@ -720,7 +804,20 @@ function StudioMasterView() {
     }
   }, []);
 
+  const clearAngrySafetyTimer = useCallback(() => {
+    if (angrySafetyTimerRef.current !== null) {
+      clearTimeout(angrySafetyTimerRef.current);
+      angrySafetyTimerRef.current = null;
+    }
+  }, []);
+
+  const clearQueuedReaction = useCallback(() => {
+    queuedReactionRef.current = null;
+    setQueuedReactionType(null);
+  }, []);
+
   const stopAllGoalRecognizers = useCallback((keepStatus = false) => {
+    isSpeechRecognizerActiveRef.current = false;
     if (goalSpeechRecognizerRef.current) {
       goalSpeechRecognizerRef.current.stop();
     }
@@ -731,34 +828,6 @@ function StudioMasterView() {
       setGoalSpeechStatus('idle');
     }
   }, []);
-
-  const triggerGoalPlayback = useCallback(
-    (sourceLabel?: string) => {
-      if (!hasCharacterSlot(activeCharacterRef.current, 'mouthA')) {
-        return;
-      }
-      clearGoalSafetyTimer();
-      const nextId = goalTriggerIdRef.current + 1;
-      goalTriggerIdRef.current = nextId;
-      goalActiveRef.current = true;
-      setGoalTriggerId(nextId);
-      setGoalActive(true);
-      if (sourceLabel) {
-        setGoalLastEvent(sourceLabel);
-      }
-      broadcastCurrentState();
-
-      // Generous safety fallback only if video ended event never arrives (e.g. broken file)
-      goalSafetyTimerRef.current = window.setTimeout(() => {
-        if (goalTriggerIdRef.current === nextId && goalActiveRef.current) {
-          goalActiveRef.current = false;
-          setGoalActive(false);
-          broadcastCurrentState();
-        }
-      }, 25000);
-    },
-    [broadcastCurrentState, clearGoalSafetyTimer]
-  );
 
   const startCooldownCountdown = useCallback((durationMs: number) => {
     if (goalCooldownTimerRef.current !== null) {
@@ -777,25 +846,206 @@ function StudioMasterView() {
     }, 250);
   }, []);
 
+  const startAngryCooldownCountdown = useCallback((durationMs: number) => {
+    if (angryCooldownTimerRef.current !== null) {
+      clearInterval(angryCooldownTimerRef.current);
+      angryCooldownTimerRef.current = null;
+    }
+    const deadline = Date.now() + durationMs;
+    setAngryCooldownRemainingMs(durationMs);
+    angryCooldownTimerRef.current = window.setInterval(() => {
+      const rem = Math.max(0, deadline - Date.now());
+      setAngryCooldownRemainingMs(rem);
+      if (rem <= 0 && angryCooldownTimerRef.current !== null) {
+        clearInterval(angryCooldownTimerRef.current);
+        angryCooldownTimerRef.current = null;
+      }
+    }, 250);
+  }, []);
+
+  const activateReactionNow = useCallback(
+    (type: SpecialReactionType, sourceLabel: string, fromVoice: boolean) => {
+      if (type === 'goal') {
+        if (!hasCharacterSlot(activeCharacterRef.current, 'mouthA')) {
+          setGoalLastEvent('Slot BOCCA A mancante sul personaggio attivo');
+          return false;
+        }
+        if (fromVoice) {
+          const cooldownMs = goalCooldownSecondsRef.current * 1000;
+          lastVoiceGoalTriggerAtRef.current = Date.now();
+          startCooldownCountdown(cooldownMs);
+        }
+        clearGoalSafetyTimer();
+        const nextId = goalTriggerIdRef.current + 1;
+        goalTriggerIdRef.current = nextId;
+        goalActiveRef.current = true;
+        setGoalTriggerId(nextId);
+        setGoalActive(true);
+        setGoalLastEvent(sourceLabel);
+        broadcastCurrentState();
+
+        // Generous safety fallback if video ended event never arrives
+        goalSafetyTimerRef.current = window.setTimeout(() => {
+          if (goalTriggerIdRef.current === nextId && goalActiveRef.current) {
+            goalActiveRef.current = false;
+            setGoalActive(false);
+            broadcastCurrentState();
+          }
+        }, 45000);
+        return true;
+      }
+
+      // Angry reaction
+      if (!hasCharacterSlot(activeCharacterRef.current, 'angryReaction')) {
+        setAngryWarningMessage(
+          'Asset REAZIONE ARRABBIATA non presente su questo personaggio: animazione corrente mantenuta.'
+        );
+        setGoalLastEvent('Reazione arrabbiata non avviata (asset mancante)');
+        return false;
+      }
+      setAngryWarningMessage(null);
+      if (fromVoice) {
+        const cooldownMs = angryCooldownSecondsRef.current * 1000;
+        lastVoiceAngryTriggerAtRef.current = Date.now();
+        startAngryCooldownCountdown(cooldownMs);
+      }
+      clearAngrySafetyTimer();
+      const nextId = angryTriggerIdRef.current + 1;
+      angryTriggerIdRef.current = nextId;
+      angryActiveRef.current = true;
+      setAngryTriggerId(nextId);
+      setAngryActive(true);
+      setGoalLastEvent(sourceLabel);
+      broadcastCurrentState();
+
+      angrySafetyTimerRef.current = window.setTimeout(() => {
+        if (angryTriggerIdRef.current === nextId && angryActiveRef.current) {
+          angryActiveRef.current = false;
+          setAngryActive(false);
+          broadcastCurrentState();
+        }
+      }, 45000);
+      return true;
+    },
+    [
+      broadcastCurrentState,
+      clearAngrySafetyTimer,
+      clearGoalSafetyTimer,
+      startAngryCooldownCountdown,
+      startCooldownCountdown,
+    ]
+  );
+
+  const requestSpecialReaction = useCallback(
+    (type: SpecialReactionType, sourceLabel: string, fromVoice: boolean) => {
+      // 1. Validate required asset on active character before queueing or interrupting
+      if (type === 'goal' && !hasCharacterSlot(activeCharacterRef.current, 'mouthA')) {
+        setGoalLastEvent('Slot BOCCA A mancante sul personaggio attivo');
+        return;
+      }
+      if (type === 'angry' && !hasCharacterSlot(activeCharacterRef.current, 'angryReaction')) {
+        setAngryWarningMessage(
+          'Asset REAZIONE ARRABBIATA non presente su questo personaggio: animazione corrente mantenuta.'
+        );
+        setGoalLastEvent('Reazione arrabbiata non avviata (asset mancante)');
+        return;
+      }
+      if (type === 'angry') {
+        setAngryWarningMessage(null);
+      }
+
+      const activeType: SpecialReactionType | null = angryActiveRef.current
+        ? 'angry'
+        : goalActiveRef.current
+        ? 'goal'
+        : null;
+
+      // 2. Ignore repetitions of the reaction currently playing
+      if (activeType === type) {
+        setGoalLastEvent(
+          type === 'goal'
+            ? 'GOAL ignorato (già in riproduzione)'
+            : 'Reazione arrabbiata ignorata (già in riproduzione)'
+        );
+        return;
+      }
+
+      // 3. Enforce per-command cooldown for voice triggers
+      if (fromVoice) {
+        const now = Date.now();
+        if (type === 'goal') {
+          const cooldownMs = goalCooldownSecondsRef.current * 1000;
+          const elapsed = now - lastVoiceGoalTriggerAtRef.current;
+          if (lastVoiceGoalTriggerAtRef.current > 0 && elapsed < cooldownMs) {
+            const remSec = Math.ceil((cooldownMs - elapsed) / 1000);
+            setGoalLastEvent(`GOAL ignorato (pausa ${remSec}s)`);
+            return;
+          }
+        } else {
+          const cooldownMs = angryCooldownSecondsRef.current * 1000;
+          const elapsed = now - lastVoiceAngryTriggerAtRef.current;
+          if (lastVoiceAngryTriggerAtRef.current > 0 && elapsed < cooldownMs) {
+            const remSec = Math.ceil((cooldownMs - elapsed) / 1000);
+            setGoalLastEvent(`Reazione arrabbiata ignorata (pausa ${remSec}s)`);
+            return;
+          }
+        }
+      }
+
+      // 4. If the OTHER special reaction is playing, queue at most 1 pending command without interrupting
+      if (activeType !== null && activeType !== type) {
+        if (queuedReactionRef.current) {
+          return;
+        }
+        queuedReactionRef.current = { type, sourceLabel, fromVoice };
+        setQueuedReactionType(type);
+        setGoalLastEvent(
+          `${type === 'goal' ? 'GOAL' : 'Reazione arrabbiata'} in attesa (parte al termine del video corrente)`
+        );
+        return;
+      }
+
+      // 5. Idle: play immediately
+      activateReactionNow(type, sourceLabel, fromVoice);
+    },
+    [activateReactionNow]
+  );
+
+  const flushQueuedReactionIfAny = useCallback(() => {
+    const pending = queuedReactionRef.current;
+    if (!pending) return false;
+    queuedReactionRef.current = null;
+    setQueuedReactionType(null);
+
+    if (
+      pending.fromVoice &&
+      ((pending.type === 'goal' && !goalVoiceEnabledRef.current) ||
+        (pending.type === 'angry' && !angryVoiceEnabledRef.current))
+    ) {
+      return false;
+    }
+
+    return activateReactionNow(pending.type, pending.sourceLabel, pending.fromVoice);
+  }, [activateReactionNow]);
+
   const handleVoiceGoalDetected = useCallback(
     (transcript: string) => {
       setGoalLastTranscript(transcript);
       if (!goalVoiceEnabledRef.current) return;
-
-      const now = Date.now();
-      const cooldownMs = goalCooldownSecondsRef.current * 1000;
-      const elapsed = now - lastVoiceGoalTriggerAtRef.current;
-      if (lastVoiceGoalTriggerAtRef.current > 0 && elapsed < cooldownMs) {
-        const remSec = Math.ceil((cooldownMs - elapsed) / 1000);
-        setGoalLastEvent(`GOAL ignorato (pausa ${remSec}s)`);
-        return;
-      }
-
-      lastVoiceGoalTriggerAtRef.current = now;
-      startCooldownCountdown(cooldownMs);
-      triggerGoalPlayback(`GOAL rilevato ("${transcript}")`);
+      setDetectedCommandLabel('GOAL');
+      requestSpecialReaction('goal', `GOAL rilevato ("${transcript}")`, true);
     },
-    [startCooldownCountdown, triggerGoalPlayback]
+    [requestSpecialReaction]
+  );
+
+  const handleVoiceAngryDetected = useCallback(
+    (transcript: string) => {
+      setGoalLastTranscript(transcript);
+      if (!angryVoiceEnabledRef.current) return;
+      setDetectedCommandLabel('REAZIONE ARRABBIATA (“MA VAFFANCULO”)');
+      requestSpecialReaction('angry', `Reazione arrabbiata rilevata ("${transcript}")`, true);
+    },
+    [requestSpecialReaction]
   );
 
   const handleGoalPlaybackEnded = useCallback(
@@ -805,10 +1055,29 @@ function StudioMasterView() {
       if (goalActiveRef.current) {
         goalActiveRef.current = false;
         setGoalActive(false);
-        broadcastCurrentState();
+        const startedQueued = flushQueuedReactionIfAny();
+        if (!startedQueued) {
+          broadcastCurrentState();
+        }
       }
     },
-    [broadcastCurrentState, clearGoalSafetyTimer]
+    [broadcastCurrentState, clearGoalSafetyTimer, flushQueuedReactionIfAny]
+  );
+
+  const handleAngryPlaybackEnded = useCallback(
+    (endedTriggerId: number) => {
+      if (endedTriggerId !== angryTriggerIdRef.current) return;
+      clearAngrySafetyTimer();
+      if (angryActiveRef.current) {
+        angryActiveRef.current = false;
+        setAngryActive(false);
+        const startedQueued = flushQueuedReactionIfAny();
+        if (!startedQueued) {
+          broadcastCurrentState();
+        }
+      }
+    },
+    [broadcastCurrentState, clearAngrySafetyTimer, flushQueuedReactionIfAny]
   );
 
   const startSelectedGoalEngine = useCallback(
@@ -818,16 +1087,17 @@ function StudioMasterView() {
 
       setGoalSpeechError(null);
       setGoalLastTranscript('');
+      setDetectedCommandLabel('');
       setGoalLastEvent('');
-      goalVoiceEnabledRef.current = true;
-      goalActiveRef.current = false;
-      setGoalVoiceEnabled(true);
-      setGoalActive(false);
+      isSpeechRecognizerActiveRef.current = true;
       broadcastCurrentState();
 
       const callbacks = {
         onGoalDetected: (transcript: string) => {
           handleVoiceGoalDetected(transcript);
+        },
+        onAngryDetected: (transcript: string) => {
+          handleVoiceAngryDetected(transcript);
         },
         onTranscript: (transcript: string) => {
           setGoalLastTranscript(transcript);
@@ -841,10 +1111,16 @@ function StudioMasterView() {
             status === 'unsupported' ||
             status === 'error'
           ) {
+            isSpeechRecognizerActiveRef.current = false;
             goalVoiceEnabledRef.current = false;
+            angryVoiceEnabledRef.current = false;
             goalActiveRef.current = false;
+            angryActiveRef.current = false;
+            clearQueuedReaction();
             setGoalVoiceEnabled(false);
+            setAngryVoiceEnabled(false);
             setGoalActive(false);
+            setAngryActive(false);
             broadcastCurrentState();
           }
         },
@@ -879,33 +1155,105 @@ function StudioMasterView() {
         goalSpeechRecognizerRef.current.start();
       }
     },
-    [broadcastCurrentState, handleVoiceGoalDetected, refreshMics]
+    [
+      broadcastCurrentState,
+      clearQueuedReaction,
+      handleVoiceAngryDetected,
+      handleVoiceGoalDetected,
+      refreshMics,
+    ]
   );
 
   const handleToggleGoalVoice = useCallback(() => {
-    if (goalVoiceEnabledRef.current || goalSpeechStatus === 'loading_model') {
-      stopAllGoalRecognizers(false);
-      clearGoalSafetyTimer();
+    if (goalVoiceEnabledRef.current) {
       goalVoiceEnabledRef.current = false;
-      goalActiveRef.current = false;
       setGoalVoiceEnabled(false);
-      setGoalActive(false);
-      setGoalSpeechStatus('idle');
-      setGoalSpeechError(null);
-      setGoalLastTranscript('');
+      if (queuedReactionRef.current?.type === 'goal') {
+        clearQueuedReaction();
+      }
+      if (goalActiveRef.current) {
+        clearGoalSafetyTimer();
+        goalActiveRef.current = false;
+        setGoalActive(false);
+        flushQueuedReactionIfAny();
+      }
+      if (!angryVoiceEnabledRef.current) {
+        stopAllGoalRecognizers(false);
+        setGoalSpeechStatus('idle');
+        setGoalSpeechError(null);
+        setGoalLastTranscript('');
+        setDetectedCommandLabel('');
+      }
       broadcastCurrentState();
       return;
     }
 
-    void startSelectedGoalEngine();
-  }, [broadcastCurrentState, clearGoalSafetyTimer, goalSpeechStatus, startSelectedGoalEngine, stopAllGoalRecognizers]);
+    goalVoiceEnabledRef.current = true;
+    setGoalVoiceEnabled(true);
+    broadcastCurrentState();
+
+    // Start the single shared recognizer only if it is not already running
+    if (!isSpeechRecognizerActiveRef.current) {
+      void startSelectedGoalEngine();
+    }
+  }, [
+    broadcastCurrentState,
+    clearGoalSafetyTimer,
+    clearQueuedReaction,
+    flushQueuedReactionIfAny,
+    startSelectedGoalEngine,
+    stopAllGoalRecognizers,
+  ]);
+
+  const handleToggleAngryVoice = useCallback(() => {
+    if (angryVoiceEnabledRef.current) {
+      angryVoiceEnabledRef.current = false;
+      setAngryVoiceEnabled(false);
+      setAngryWarningMessage(null);
+      if (queuedReactionRef.current?.type === 'angry') {
+        clearQueuedReaction();
+      }
+      if (angryActiveRef.current) {
+        clearAngrySafetyTimer();
+        angryActiveRef.current = false;
+        setAngryActive(false);
+        flushQueuedReactionIfAny();
+      }
+      if (!goalVoiceEnabledRef.current) {
+        stopAllGoalRecognizers(false);
+        setGoalSpeechStatus('idle');
+        setGoalSpeechError(null);
+        setGoalLastTranscript('');
+        setDetectedCommandLabel('');
+      }
+      broadcastCurrentState();
+      return;
+    }
+
+    angryVoiceEnabledRef.current = true;
+    setAngryVoiceEnabled(true);
+    setAngryWarningMessage(null);
+    broadcastCurrentState();
+
+    // Start the single shared recognizer only if it is not already running
+    if (!isSpeechRecognizerActiveRef.current) {
+      void startSelectedGoalEngine();
+    }
+  }, [
+    broadcastCurrentState,
+    clearAngrySafetyTimer,
+    clearQueuedReaction,
+    flushQueuedReactionIfAny,
+    startSelectedGoalEngine,
+    stopAllGoalRecognizers,
+  ]);
 
   const handleChangeGoalEngine = useCallback(
     (pref: GoalEnginePreference) => {
       goalEnginePreferenceRef.current = pref;
       setGoalEnginePreference(pref);
       setGoalSpeechError(null);
-      if (goalVoiceEnabledRef.current) {
+      if (goalVoiceEnabledRef.current || angryVoiceEnabledRef.current) {
         stopAllGoalRecognizers(true);
         void startSelectedGoalEngine(pref);
       } else {
@@ -919,7 +1267,10 @@ function StudioMasterView() {
     (micId: string) => {
       selectedGoalMicIdRef.current = micId;
       setSelectedGoalMicId(micId);
-      if (goalVoiceEnabledRef.current && resolveGoalEngine(goalEnginePreferenceRef.current) === 'vosk') {
+      if (
+        (goalVoiceEnabledRef.current || angryVoiceEnabledRef.current) &&
+        resolveGoalEngine(goalEnginePreferenceRef.current) === 'vosk'
+      ) {
         stopAllGoalRecognizers(true);
         void startSelectedGoalEngine(undefined, micId);
       }
@@ -951,10 +1302,16 @@ function StudioMasterView() {
   );
 
   const handleRemoveVoskModel = useCallback(async () => {
-    if (goalVoiceEnabledRef.current && resolveGoalEngine(goalEnginePreferenceRef.current) === 'vosk') {
+    if (
+      (goalVoiceEnabledRef.current || angryVoiceEnabledRef.current) &&
+      resolveGoalEngine(goalEnginePreferenceRef.current) === 'vosk'
+    ) {
       stopAllGoalRecognizers(false);
       goalVoiceEnabledRef.current = false;
+      angryVoiceEnabledRef.current = false;
+      clearQueuedReaction();
       setGoalVoiceEnabled(false);
+      setAngryVoiceEnabled(false);
       broadcastCurrentState();
     }
     voskGoalRecognizerRef.current?.invalidateCachedModel();
@@ -966,18 +1323,22 @@ function StudioMasterView() {
       // ignore
     }
     await refreshVoskModelStatus();
-  }, [broadcastCurrentState, refreshVoskModelStatus, stopAllGoalRecognizers]);
+  }, [broadcastCurrentState, clearQueuedReaction, refreshVoskModelStatus, stopAllGoalRecognizers]);
 
   useEffect(() => {
     return () => {
       clearGoalSafetyTimer();
+      clearAngrySafetyTimer();
       if (goalCooldownTimerRef.current !== null) {
         clearInterval(goalCooldownTimerRef.current);
+      }
+      if (angryCooldownTimerRef.current !== null) {
+        clearInterval(angryCooldownTimerRef.current);
       }
       goalSpeechRecognizerRef.current?.stop();
       voskGoalRecognizerRef.current?.destroy();
     };
-  }, [clearGoalSafetyTimer]);
+  }, [clearAngrySafetyTimer, clearGoalSafetyTimer]);
 
   // Persist layout lock state
   useEffect(() => {
@@ -1541,6 +1902,13 @@ function StudioMasterView() {
         goalActiveRef.current = false;
         setGoalActive(false);
       }
+      if (angryActiveRef.current) {
+        clearAngrySafetyTimer();
+        angryActiveRef.current = false;
+        setAngryActive(false);
+      }
+      clearQueuedReaction();
+      setAngryWarningMessage(null);
       activeCharacterRef.current = chosen;
       broadcastCurrentState(undefined, chosen);
     }
@@ -1850,6 +2218,7 @@ function StudioMasterView() {
               delegateMode={delegateMode}
               goalVoiceEnabled={goalVoiceEnabled}
               goalActive={goalActive}
+              angryActive={angryActive}
               onRetryCamera={handleRetryCamera}
               onStartSimulation={handleStartSimulation}
               onOpenGuide={() => setIsTikTokGuideOpen(true)}
@@ -1916,6 +2285,10 @@ function StudioMasterView() {
               goalActive={goalActive}
               goalTriggerId={goalTriggerId}
               onGoalPlaybackEnded={handleGoalPlaybackEnded}
+              angryActive={angryActive}
+              angryTriggerId={angryTriggerId}
+              angryNonVideoDurationMs={angryNonVideoDurationSeconds * 1000}
+              onAngryPlaybackEnded={handleAngryPlaybackEnded}
               isCleanOutput={isCleanFullscreen}
             />
 
@@ -2079,6 +2452,10 @@ function StudioMasterView() {
             goalVoiceEnabled={goalVoiceEnabled}
             onToggleGoalVoice={handleToggleGoalVoice}
             goalActive={goalActive}
+            angryVoiceEnabled={angryVoiceEnabled}
+            onToggleAngryVoice={handleToggleAngryVoice}
+            angryActive={angryActive}
+            queuedReactionType={queuedReactionType}
             goalSpeechStatus={goalSpeechStatus}
             goalEnginePreference={goalEnginePreference}
             goalResolvedEngine={goalResolvedEngine}
@@ -2086,11 +2463,18 @@ function StudioMasterView() {
             onChangeGoalEngine={handleChangeGoalEngine}
             goalSpeechSupported={goalSpeechSupported}
             goalLastTranscript={goalLastTranscript}
+            detectedCommandLabel={detectedCommandLabel}
             goalLastEvent={goalLastEvent}
             goalSpeechError={goalSpeechError}
+            angryWarningMessage={angryWarningMessage}
             goalCooldownSeconds={goalCooldownSeconds}
             onChangeGoalCooldown={setGoalCooldownSeconds}
             goalCooldownRemainingMs={goalCooldownRemainingMs}
+            angryCooldownSeconds={angryCooldownSeconds}
+            onChangeAngryCooldown={setAngryCooldownSeconds}
+            angryCooldownRemainingMs={angryCooldownRemainingMs}
+            angryNonVideoDurationSeconds={angryNonVideoDurationSeconds}
+            onChangeAngryNonVideoDuration={setAngryNonVideoDurationSeconds}
             availableMics={availableMics}
             selectedGoalMicId={selectedGoalMicId}
             onSelectGoalMic={handleSelectGoalMic}
@@ -2100,7 +2484,15 @@ function StudioMasterView() {
             onImportVoskModel={handleImportVoskModel}
             onRemoveVoskModel={handleRemoveVoskModel}
             hasMouthASlot={hasCharacterSlot(activeCharacter, 'mouthA')}
-            onTestGoalTrigger={() => triggerGoalPlayback('Test manuale GOAL')}
+            onTestGoalTrigger={() => {
+              setDetectedCommandLabel('GOAL (Test manuale)');
+              requestSpecialReaction('goal', 'Test manuale GOAL', false);
+            }}
+            hasAngryReactionSlot={hasCharacterSlot(activeCharacter, 'angryReaction')}
+            onTestAngryTrigger={() => {
+              setDetectedCommandLabel('REAZIONE ARRABBIATA (Test manuale)');
+              requestSpecialReaction('angry', 'Test manuale reazione arrabbiata', false);
+            }}
             isLayoutLocked={isLayoutLocked}
             onToggleLayoutLock={() => setIsLayoutLocked((prev) => !prev)}
             onOpenPopoutWindow={handleOpenPopoutWindow}

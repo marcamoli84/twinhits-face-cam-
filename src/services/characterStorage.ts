@@ -140,6 +140,8 @@ export async function saveAppConfig(config: {
   goalEnginePreference?: GoalEnginePreference;
   goalMicId?: string;
   goalCooldownSeconds?: number;
+  angryCooldownSeconds?: number;
+  angryNonVideoDurationSeconds?: number;
   voskModelFileName?: string;
 }): Promise<void> {
   try {

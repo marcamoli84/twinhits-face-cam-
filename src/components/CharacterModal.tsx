@@ -51,6 +51,7 @@ const SLOT_LABELS: Record<CharacterSlotKey, string> = {
   mouthA: 'BOCCA A',
   mouthE: 'BOCCA E',
   mouthO: 'BOCCA O',
+  angryReaction: 'REAZIONE ARRABBIATA — “MA VAFFANCULO”',
 };
 
 export const CharacterModal: React.FC<CharacterModalProps> = ({
@@ -73,6 +74,7 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
     mouthE: '',
     mouthO: '',
     eyesClosed: '',
+    angryReaction: '',
   });
   const [mediaTypes, setMediaTypes] = useState<Partial<Record<CharacterSlotKey, AvatarMediaType>>>({});
   const [mediaKeys, setMediaKeys] = useState<Partial<Record<CharacterSlotKey, string>>>({});
@@ -83,6 +85,7 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
   const [validatingSlot, setValidatingSlot] = useState<CharacterSlotKey | null>(null);
 
   const [testSlot, setTestSlot] = useState<CharacterSlotKey>('silent');
+  const [testTriggerNonce, setTestTriggerNonce] = useState(1);
   const [testAutoCycle, setTestAutoCycle] = useState(false);
   const [testIsPlaying, setTestIsPlaying] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -157,6 +160,7 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
       mouthE: '',
       mouthO: '',
       eyesClosed: '',
+      angryReaction: '',
     });
     setMediaTypes({});
     setMediaKeys({});
@@ -799,6 +803,30 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
                     onUpload={(e) => handleFileUpload('mouthO', e)}
                     onClear={() => handleClearSlot('mouthO')}
                   />
+
+                  <MediaUploadCard
+                    title="REAZIONE ARRABBIATA — “MA VAFFANCULO”"
+                    description='Facoltativo: parte 1 volta al comando "ma vaffanculo"'
+                    mediaSrc={getSlotResolvedSrc('angryReaction')}
+                    mediaType={getSlotMediaType('angryReaction')}
+                    validation={mediaChecks.angryReaction}
+                    isValidating={validatingSlot === 'angryReaction'}
+                    isPlaying={slotPlaying.angryReaction ?? true}
+                    onTogglePlay={() =>
+                      setSlotPlaying((p) => ({
+                        ...p,
+                        angryReaction: !(p.angryReaction ?? true),
+                      }))
+                    }
+                    onTestInStage={() => {
+                      setTestAutoCycle(false);
+                      setTestSlot('angryReaction');
+                      setTestTriggerNonce((n) => n + 1);
+                      setTestIsPlaying(true);
+                    }}
+                    onUpload={(e) => handleFileUpload('angryReaction', e)}
+                    onClear={() => handleClearSlot('angryReaction')}
+                  />
                 </div>
               </div>
 
@@ -821,6 +849,8 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
                           activeSlot={testSlot}
                           resolvedMediaUrls={previewResolvedUrls}
                           isPlaying={testIsPlaying}
+                          angryActive={testSlot === 'angryReaction'}
+                          angryTriggerId={testSlot === 'angryReaction' ? testTriggerNonce : 0}
                         />
                       ) : (
                         <span className="text-[10px] text-zinc-500 text-center">
@@ -891,6 +921,9 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
                         onClick={() => {
                           setTestAutoCycle(false);
                           setTestSlot(slot);
+                          if (slot === 'angryReaction') {
+                            setTestTriggerNonce((n) => n + 1);
+                          }
                           setTestIsPlaying(true);
                         }}
                         className={`px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider border transition ${
@@ -903,6 +936,8 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
                       >
                         {slot === 'eyesClosed'
                           ? 'BLINK'
+                          : slot === 'angryReaction'
+                          ? 'ARRABBIATA'
                           : slot.replace('mouth', 'BOCCA ')}
                       </button>
                     );

@@ -12,6 +12,7 @@ export const CHARACTER_SLOTS: CharacterSlotKey[] = [
   'mouthA',
   'mouthE',
   'mouthO',
+  'angryReaction',
 ];
 
 export function hasCharacterSlot(

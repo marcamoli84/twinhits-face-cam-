@@ -7,6 +7,7 @@ import {
 
 export interface GoalSpeechCallbacks {
   onGoalDetected: (transcript: string) => void;
+  onAngryDetected?: (transcript: string) => void;
   onTranscript?: (transcript: string, isFinal: boolean) => void;
   onStatusChange?: (status: GoalSpeechStatus) => void;
   onError?: (message: string) => void;
@@ -99,6 +100,11 @@ export async function enumerateAudioInputDevices(): Promise<AudioInputDeviceInfo
     }));
 }
 
+// Matches spoken "ma vaffanculo" (case-insensitive, ignoring punctuation, inside longer sentences)
+// and Chrome Web Speech exact 9-asterisk profanity mask "ma v*********", while rejecting
+// standalone "ma", "vaffa", "vaffanculo" without "ma", or incomplete expressions.
+const ANGRY_PHRASE_REGEX = /(?:^|\s)ma\s+(?:vaffanculo+|v\*{9})(?=$|\s)/g;
+
 export function countGoalMatches(transcript: string): number {
   if (!transcript) return 0;
   const matches = transcript.match(GOAL_KEYWORD_REGEX);
@@ -109,6 +115,22 @@ export function containsGoalKeyword(transcript: string): boolean {
   return countGoalMatches(transcript) > 0;
 }
 
+export function countAngryPhraseMatches(transcript: string): number {
+  if (!transcript) return 0;
+  const normalized = transcript
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}*\s]+/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!normalized) return 0;
+  const matches = normalized.match(ANGRY_PHRASE_REGEX);
+  return matches ? matches.length : 0;
+}
+
+export function containsAngryPhrase(transcript: string): boolean {
+  return countAngryPhraseMatches(transcript) > 0;
+}
+
 export class GoalSpeechRecognizer {
   private recognition: SpeechRecognitionInstance | null = null;
   private isRunning = false;
@@ -116,7 +138,9 @@ export class GoalSpeechRecognizer {
   private hasTerminalError = false;
   private restartTimer: number | null = null;
   private handledCountsByIndex = new Map<number, number>();
+  private handledAngryCountsByIndex = new Map<number, number>();
   private lastTriggeredAt = 0;
+  private lastAngryTriggeredAt = 0;
   private callbacks: GoalSpeechCallbacks;
 
   constructor(callbacks: GoalSpeechCallbacks) {
@@ -149,6 +173,7 @@ export class GoalSpeechRecognizer {
 
     try {
       this.handledCountsByIndex.clear();
+      this.handledAngryCountsByIndex.clear();
       const rec = new Ctor();
       rec.lang = 'it-IT';
       rec.continuous = true;
@@ -188,6 +213,18 @@ export class GoalSpeechRecognizer {
             if (now - this.lastTriggeredAt > 600) {
               this.lastTriggeredAt = now;
               this.callbacks.onGoalDetected(trimmed);
+            }
+          }
+
+          const angryMatchCount = countAngryPhraseMatches(trimmed);
+          const prevAngryCount = this.handledAngryCountsByIndex.get(i) ?? 0;
+
+          if (angryMatchCount > prevAngryCount) {
+            this.handledAngryCountsByIndex.set(i, angryMatchCount);
+            const now = performance.now();
+            if (now - this.lastAngryTriggeredAt > 600) {
+              this.lastAngryTriggeredAt = now;
+              this.callbacks.onAngryDetected?.(trimmed);
             }
           }
         }
@@ -287,6 +324,7 @@ export class GoalSpeechRecognizer {
     this.hasTerminalError = false;
     this.clearRestartTimer();
     this.handledCountsByIndex.clear();
+    this.handledAngryCountsByIndex.clear();
     if (this.recognition) {
       try {
         this.recognition.abort();

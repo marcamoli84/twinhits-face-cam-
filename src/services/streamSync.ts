@@ -29,6 +29,10 @@ export interface SyncPacket {
   goalVoiceEnabled?: boolean;
   goalActive?: boolean;
   goalTriggerId?: number;
+  angryVoiceEnabled?: boolean;
+  angryActive?: boolean;
+  angryTriggerId?: number;
+  angryNonVideoDurationMs?: number;
 }
 
 export interface SyncRequestPacket {
