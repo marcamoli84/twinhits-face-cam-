@@ -18,7 +18,8 @@ import {
   CharacterSlotKey,
 } from './types/vtuber';
 import { DEFAULT_CHARACTERS } from './utils/defaultCharacters';
-import { CHARACTER_SLOTS, resolveCharacterMediaUrls } from './utils/avatarMedia';
+import { CHARACTER_SLOTS, hasCharacterSlot, resolveCharacterMediaUrls } from './utils/avatarMedia';
+import { GoalSpeechRecognizer, isGoalSpeechSupported } from './services/goalSpeechService';
 import {
   getFaceLandmarker,
   extractFaceData,
@@ -239,6 +240,15 @@ function StudioMasterView() {
   const isLayoutLockedRef = useRef<boolean>(isLayoutLocked);
   isLayoutLockedRef.current = isLayoutLocked;
 
+  // "GOAL con la voce" state (disables MediaPipe mouthA and triggers mouthA once on spoken GOAL/GOL)
+  const [goalVoiceEnabled, setGoalVoiceEnabled] = useState<boolean>(false);
+  const [goalActive, setGoalActive] = useState<boolean>(false);
+  const [goalTriggerId, setGoalTriggerId] = useState<number>(0);
+  const [goalSpeechStatus, setGoalSpeechStatus] = useState<'idle' | 'listening' | 'error'>('idle');
+  const [goalLastTranscript, setGoalLastTranscript] = useState<string>('');
+  const [goalSpeechError, setGoalSpeechError] = useState<string | null>(null);
+  const goalSpeechSupported = isGoalSpeechSupported();
+
   // Tracking & Webcam state
   const [isTracking, setIsTracking] = useState(false);
   const [availableDevices, setAvailableDevices] = useState<{ deviceId: string; label: string }[]>([]);
@@ -423,6 +433,14 @@ function StudioMasterView() {
   scenographySettingsRef.current = scenographySettings;
   const stadiumBgSettingsRef = useRef<StadiumBackgroundSettings>(stadiumBgSettings);
   stadiumBgSettingsRef.current = stadiumBgSettings;
+  const goalVoiceEnabledRef = useRef<boolean>(goalVoiceEnabled);
+  goalVoiceEnabledRef.current = goalVoiceEnabled;
+  const goalActiveRef = useRef<boolean>(goalActive);
+  goalActiveRef.current = goalActive;
+  const goalTriggerIdRef = useRef<number>(goalTriggerId);
+  goalTriggerIdRef.current = goalTriggerId;
+  const goalSpeechRecognizerRef = useRef<GoalSpeechRecognizer | null>(null);
+  const goalSafetyTimerRef = useRef<number | null>(null);
 
   // Initialize and load from IndexedDB on startup
   useEffect(() => {
@@ -545,12 +563,130 @@ function StudioMasterView() {
         backgroundMode: backgroundModeRef.current,
         scenographySettings: scenographySettingsRef.current,
         stadiumBgSettings: stadiumBgSettingsRef.current,
+        goalVoiceEnabled: goalVoiceEnabledRef.current,
+        goalActive: goalActiveRef.current,
+        goalTriggerId: goalTriggerIdRef.current,
       };
 
       syncManagerRef.current.broadcastState(packet);
     },
     []
   );
+
+  const clearGoalSafetyTimer = useCallback(() => {
+    if (goalSafetyTimerRef.current !== null) {
+      clearTimeout(goalSafetyTimerRef.current);
+      goalSafetyTimerRef.current = null;
+    }
+  }, []);
+
+  const triggerGoalPlayback = useCallback(() => {
+    if (!hasCharacterSlot(activeCharacterRef.current, 'mouthA')) {
+      return;
+    }
+    clearGoalSafetyTimer();
+    const nextId = goalTriggerIdRef.current + 1;
+    goalTriggerIdRef.current = nextId;
+    goalActiveRef.current = true;
+    setGoalTriggerId(nextId);
+    setGoalActive(true);
+    broadcastCurrentState();
+
+    // Generous safety fallback only if video ended event never arrives (e.g. broken file)
+    goalSafetyTimerRef.current = window.setTimeout(() => {
+      if (goalTriggerIdRef.current === nextId && goalActiveRef.current) {
+        goalActiveRef.current = false;
+        setGoalActive(false);
+        broadcastCurrentState();
+      }
+    }, 25000);
+  }, [broadcastCurrentState, clearGoalSafetyTimer]);
+
+  const handleGoalPlaybackEnded = useCallback(
+    (endedTriggerId: number) => {
+      if (endedTriggerId !== goalTriggerIdRef.current) return;
+      clearGoalSafetyTimer();
+      if (goalActiveRef.current) {
+        goalActiveRef.current = false;
+        setGoalActive(false);
+        broadcastCurrentState();
+      }
+    },
+    [broadcastCurrentState, clearGoalSafetyTimer]
+  );
+
+  const handleToggleGoalVoice = useCallback(() => {
+    if (goalVoiceEnabledRef.current) {
+      goalSpeechRecognizerRef.current?.stop();
+      clearGoalSafetyTimer();
+      goalVoiceEnabledRef.current = false;
+      goalActiveRef.current = false;
+      setGoalVoiceEnabled(false);
+      setGoalActive(false);
+      setGoalSpeechStatus('idle');
+      setGoalSpeechError(null);
+      setGoalLastTranscript('');
+      broadcastCurrentState();
+      return;
+    }
+
+    setGoalSpeechError(null);
+    setGoalLastTranscript('');
+    goalVoiceEnabledRef.current = true;
+    goalActiveRef.current = false;
+    setGoalVoiceEnabled(true);
+    setGoalActive(false);
+    broadcastCurrentState();
+
+    const callbacks = {
+      onGoalDetected: (transcript: string) => {
+        setGoalLastTranscript(transcript);
+        if (goalVoiceEnabledRef.current) {
+          triggerGoalPlayback();
+        }
+      },
+      onTranscript: (transcript: string) => {
+        setGoalLastTranscript(transcript);
+      },
+      onStatusChange: (status: 'idle' | 'listening' | 'error') => {
+        setGoalSpeechStatus(status);
+      },
+      onError: (msg: string) => {
+        setGoalSpeechError(msg);
+        if (
+          msg.toLowerCase().includes('negato') ||
+          msg.toLowerCase().includes('nessun microfono') ||
+          msg.toLowerCase().includes('non supportato')
+        ) {
+          goalVoiceEnabledRef.current = false;
+          goalActiveRef.current = false;
+          setGoalVoiceEnabled(false);
+          setGoalActive(false);
+          broadcastCurrentState();
+        }
+      },
+    };
+
+    if (!goalSpeechRecognizerRef.current) {
+      goalSpeechRecognizerRef.current = new GoalSpeechRecognizer(callbacks);
+    } else {
+      goalSpeechRecognizerRef.current.updateCallbacks(callbacks);
+    }
+
+    const started = goalSpeechRecognizerRef.current.start();
+    if (!started) {
+      goalVoiceEnabledRef.current = false;
+      setGoalVoiceEnabled(false);
+      broadcastCurrentState();
+    }
+  }, [broadcastCurrentState, clearGoalSafetyTimer, triggerGoalPlayback]);
+
+  useEffect(() => {
+    return () => {
+      clearGoalSafetyTimer();
+      goalSpeechRecognizerRef.current?.stop();
+    };
+  }, [clearGoalSafetyTimer]);
 
   // Persist layout lock state
   useEffect(() => {
@@ -1109,6 +1245,11 @@ function StudioMasterView() {
     setActiveCharacterId(id);
     const chosen = characters.find((c) => c.id === id);
     if (chosen) {
+      if (goalActiveRef.current) {
+        clearGoalSafetyTimer();
+        goalActiveRef.current = false;
+        setGoalActive(false);
+      }
       activeCharacterRef.current = chosen;
       broadcastCurrentState(undefined, chosen);
     }
@@ -1416,6 +1557,8 @@ function StudioMasterView() {
               realFps={realFps}
               cameraError={cameraError}
               delegateMode={delegateMode}
+              goalVoiceEnabled={goalVoiceEnabled}
+              goalActive={goalActive}
               onRetryCamera={handleRetryCamera}
               onStartSimulation={handleStartSimulation}
               onOpenGuide={() => setIsTikTokGuideOpen(true)}
@@ -1478,6 +1621,10 @@ function StudioMasterView() {
               customStadiumImageUrl={customStadiumImageUrl}
               customStadiumVideoUrl={customStadiumVideoUrl}
               resolvedAvatarMediaUrls={resolveCharacterMediaUrls(activeCharacter, avatarMediaUrlMap)}
+              goalVoiceEnabled={goalVoiceEnabled}
+              goalActive={goalActive}
+              goalTriggerId={goalTriggerId}
+              onGoalPlaybackEnded={handleGoalPlaybackEnded}
               isCleanOutput={isCleanFullscreen}
             />
 
@@ -1638,6 +1785,15 @@ function StudioMasterView() {
                 return updated;
               });
             }}
+            goalVoiceEnabled={goalVoiceEnabled}
+            onToggleGoalVoice={handleToggleGoalVoice}
+            goalActive={goalActive}
+            goalSpeechStatus={goalSpeechStatus}
+            goalSpeechSupported={goalSpeechSupported}
+            goalLastTranscript={goalLastTranscript}
+            goalSpeechError={goalSpeechError}
+            hasMouthASlot={hasCharacterSlot(activeCharacter, 'mouthA')}
+            onTestGoalTrigger={triggerGoalPlayback}
             isLayoutLocked={isLayoutLocked}
             onToggleLayoutLock={() => setIsLayoutLocked((prev) => !prev)}
             onOpenPopoutWindow={handleOpenPopoutWindow}

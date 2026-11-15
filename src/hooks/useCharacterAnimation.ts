@@ -17,11 +17,20 @@ interface AnimationResult {
   smoothedAngles: { roll: number; pitch: number; yaw: number };
 }
 
+interface CharacterAnimationOptions {
+  goalVoiceEnabled?: boolean;
+  goalActive?: boolean;
+}
+
 export function useCharacterAnimation(
   character: Character | null,
   faceData: FaceData,
-  settings: TrackingSettings
+  settings: TrackingSettings,
+  options?: CharacterAnimationOptions
 ): AnimationResult {
+  const goalVoiceEnabled = Boolean(options?.goalVoiceEnabled);
+  const goalActive = Boolean(options?.goalActive);
+
   // Store smoothed state across frames
   const smoothedState = useRef({
     roll: 0,
@@ -98,6 +107,11 @@ export function useCharacterAnimation(
   const activeSlot: CharacterSlotKey = useMemo(() => {
     if (!character) return 'silent';
 
+    // When "GOAL con la voce" is enabled, mouthA plays ONLY while goalActive is true
+    if (goalVoiceEnabled && goalActive && hasCharacterSlot(character, 'mouthA')) {
+      return 'mouthA';
+    }
+
     if (isBlinking && !isSpeaking && hasCharacterSlot(character, 'eyesClosed')) {
       return 'eyesClosed';
     }
@@ -109,7 +123,9 @@ export function useCharacterAnimation(
       if (faceData.detected && eShapeScore > 0.42 && hasCharacterSlot(character, 'mouthE')) {
         return 'mouthE';
       }
+      // Automatic MediaPipe mouthA is disabled when GOAL con la voce mode is active
       if (
+        !goalVoiceEnabled &&
         faceData.detected &&
         currentJaw > settings.mouthSensitivity * 1.85 &&
         hasCharacterSlot(character, 'mouthA')
@@ -128,6 +144,8 @@ export function useCharacterAnimation(
     return hasCharacterSlot(character, 'speaking') ? 'speaking' : 'silent';
   }, [
     character,
+    goalVoiceEnabled,
+    goalActive,
     isSpeaking,
     isBlinking,
     faceData.detected,

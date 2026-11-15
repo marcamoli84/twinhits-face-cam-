@@ -45,6 +45,7 @@ import {
   Trophy,
   Lock,
   Unlock,
+  Mic,
 } from 'lucide-react';
 
 interface MediaDeviceInfoSimplified {
@@ -108,6 +109,17 @@ interface ControlPanelProps {
   dualSettings: DualHostSettings;
   onUpdateDualSettings: (newSettings: Partial<DualHostSettings>) => void;
 
+  // GOAL con la voce
+  goalVoiceEnabled: boolean;
+  onToggleGoalVoice: () => void;
+  goalActive: boolean;
+  goalSpeechStatus: 'idle' | 'listening' | 'error';
+  goalSpeechSupported: boolean;
+  goalLastTranscript: string;
+  goalSpeechError: string | null;
+  hasMouthASlot: boolean;
+  onTestGoalTrigger: () => void;
+
   // Layout Lock & Clean Output Actions
   isLayoutLocked: boolean;
   onToggleLayoutLock: () => void;
@@ -158,6 +170,15 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
   hasCustomStadiumVideo,
   dualSettings,
   onUpdateDualSettings,
+  goalVoiceEnabled,
+  onToggleGoalVoice,
+  goalActive,
+  goalSpeechStatus,
+  goalSpeechSupported,
+  goalLastTranscript,
+  goalSpeechError,
+  hasMouthASlot,
+  onTestGoalTrigger,
   isLayoutLocked,
   onToggleLayoutLock,
   onOpenPopoutWindow,
@@ -397,6 +418,133 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
           <div className="mt-3 text-[11px] text-red-400 font-mono flex items-center gap-2 bg-red-950/30 border border-red-900/50 p-2 rounded-lg">
             <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
             {initProgress || 'Caricamento modelli MediaPipe...'}
+          </div>
+        )}
+      </div>
+
+      {/* 1B. MODALITÀ GOAL CON LA VOCE */}
+      <div className="bg-zinc-900/90 border border-zinc-800 rounded-2xl p-4 shadow-xl space-y-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <div
+              className={`w-8 h-8 rounded-lg border flex items-center justify-center ${
+                goalVoiceEnabled
+                  ? 'bg-amber-500/20 border-amber-500/50 text-amber-400'
+                  : 'bg-zinc-800/80 border-zinc-700 text-zinc-400'
+              }`}
+            >
+              <Mic className="w-4 h-4" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-white uppercase tracking-wider">
+                GOAL con la voce
+              </h3>
+              <p className="text-[11px] text-zinc-400">
+                Attiva <strong className="text-zinc-200">BOCCA A</strong> solo pronunciando &quot;GOAL&quot; o &quot;GOL&quot;
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={onToggleGoalVoice}
+            disabled={!goalSpeechSupported && !goalVoiceEnabled}
+            className={`px-3.5 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition shadow-lg ${
+              goalVoiceEnabled
+                ? 'bg-amber-500 hover:bg-amber-400 text-black shadow-amber-500/25 ring-2 ring-amber-400/50'
+                : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed'
+            }`}
+          >
+            {goalVoiceEnabled ? 'ATTIVO' : 'DISATTIVO'}
+          </button>
+        </div>
+
+        <div className="text-[11px] rounded-xl px-3 py-2 bg-zinc-950/80 border border-zinc-800 text-zinc-300 leading-relaxed">
+          {goalVoiceEnabled ? (
+            <>
+              <span className="font-bold text-amber-300">Modalità GOAL attiva:</span> l&apos;apertura
+              normale della bocca e le vocali (es. &quot;A&quot;) NON attivano più Bocca A.{' '}
+              <strong className="text-white">SILENT</strong> e{' '}
+              <strong className="text-white">SPEAKING</strong> continuano a seguire la webcam;{' '}
+              <strong className="text-amber-300">BOCCA A</strong> parte dall&apos;inizio una sola
+              volta solo quando dici <strong className="text-white">&quot;GOAL&quot;</strong> o{' '}
+              <strong className="text-white">&quot;GOL&quot;</strong>.
+            </>
+          ) : (
+            <>
+              Modalità disattivata: <strong className="text-zinc-200">BOCCA A</strong> funziona
+              normalmente con l&apos;apertura ampia della bocca rilevata dalla webcam.
+            </>
+          )}
+        </div>
+
+        {goalVoiceEnabled && (
+          <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+            <div className="flex items-center gap-2 text-[11px]">
+              <span
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border font-semibold ${
+                  goalActive
+                    ? 'bg-red-600/30 border-red-500 text-red-200 animate-pulse'
+                    : goalSpeechStatus === 'listening'
+                    ? 'bg-emerald-950/70 border-emerald-500/60 text-emerald-300'
+                    : 'bg-zinc-900 border-zinc-700 text-zinc-400'
+                }`}
+              >
+                <span
+                  className={`w-2 h-2 rounded-full ${
+                    goalActive
+                      ? 'bg-red-400'
+                      : goalSpeechStatus === 'listening'
+                      ? 'bg-emerald-400 animate-pulse'
+                      : 'bg-zinc-500'
+                  }`}
+                />
+                {goalActive
+                  ? 'GOAL IN RIPRODUZIONE!'
+                  : goalSpeechStatus === 'listening'
+                  ? 'In ascolto ("GOAL" / "GOL")'
+                  : 'Avvio ascolto...'}
+              </span>
+
+              {goalLastTranscript && (
+                <span
+                  className="text-[11px] font-mono text-zinc-400 truncate max-w-[165px]"
+                  title={goalLastTranscript}
+                >
+                  &ldquo;{goalLastTranscript}&rdquo;
+                </span>
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={onTestGoalTrigger}
+              disabled={!hasMouthASlot}
+              title="Simula il comando vocale GOAL per verificare la riproduzione dall'inizio"
+              className="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 text-amber-300 border border-zinc-700 text-[11px] font-bold transition"
+            >
+              Test GOAL
+            </button>
+          </div>
+        )}
+
+        {goalVoiceEnabled && !hasMouthASlot && (
+          <div className="p-2.5 rounded-xl bg-amber-950/50 border border-amber-500/40 text-[11px] text-amber-200">
+            Questo personaggio non ha ancora un file caricato nello slot <strong>BOCCA A</strong>.
+            Carica un video o immagine GOAL in <strong>Gestisci / Carica PNG</strong>.
+          </div>
+        )}
+
+        {!goalSpeechSupported && (
+          <div className="p-2.5 rounded-xl bg-red-950/50 border border-red-500/40 text-[11px] text-red-200">
+            Il riconoscimento vocale Web Speech API non è disponibile in questo browser. Usa Google
+            Chrome su Windows desktop.
+          </div>
+        )}
+
+        {goalSpeechError && (
+          <div className="p-2.5 rounded-xl bg-red-950/70 border border-red-500/60 text-[11px] text-red-200">
+            {goalSpeechError}
           </div>
         )}
       </div>

@@ -61,11 +61,16 @@ export const CleanOutputView: React.FC = () => {
   const [customStadiumVideoUrl, setCustomStadiumVideoUrl] = useState<string | null>(null);
   const [avatarMediaUrlMap, setAvatarMediaUrlMap] = useState<Record<string, string>>({});
 
+  const [completedGoalTriggerId, setCompletedGoalTriggerId] = useState<number>(0);
+  const [activeGoalTriggerId, setActiveGoalTriggerId] = useState<number>(0);
+
   const lastReceivedRef = useRef<number>(0);
   const syncManagerRef = useRef<StreamSyncManager | null>(null);
   const reconnectIntervalRef = useRef<number | null>(null);
   const videoObjectUrlRef = useRef<string | null>(null);
   const avatarMediaCacheRef = useRef<Record<string, string>>({});
+  const completedGoalTriggerIdRef = useRef<number>(0);
+  const goalGraceTimerRef = useRef<number | null>(null);
 
   // Set permanent window title for TikTok LIVE Studio Window Capture
   useEffect(() => {
@@ -140,6 +145,38 @@ export const CleanOutputView: React.FC = () => {
         const packet = msg as SyncPacket;
         lastReceivedRef.current = Date.now();
         setSyncState(packet);
+
+        const packetTriggerId = packet.goalTriggerId ?? 0;
+        if (!packet.goalVoiceEnabled) {
+          if (goalGraceTimerRef.current) {
+            clearTimeout(goalGraceTimerRef.current);
+            goalGraceTimerRef.current = null;
+          }
+          setActiveGoalTriggerId(0);
+          completedGoalTriggerIdRef.current = packetTriggerId;
+          setCompletedGoalTriggerId(packetTriggerId);
+        } else if (packet.goalActive && packetTriggerId > 0) {
+          if (goalGraceTimerRef.current) {
+            clearTimeout(goalGraceTimerRef.current);
+            goalGraceTimerRef.current = null;
+          }
+          if (packetTriggerId !== completedGoalTriggerIdRef.current) {
+            setActiveGoalTriggerId(packetTriggerId);
+          }
+        } else if (!packet.goalActive && packetTriggerId > 0) {
+          // Allow local output video a brief grace to finish its final frames cleanly before forcing stop
+          if (
+            completedGoalTriggerIdRef.current !== packetTriggerId &&
+            !goalGraceTimerRef.current
+          ) {
+            goalGraceTimerRef.current = window.setTimeout(() => {
+              goalGraceTimerRef.current = null;
+              completedGoalTriggerIdRef.current = packetTriggerId;
+              setCompletedGoalTriggerId(packetTriggerId);
+              setActiveGoalTriggerId(0);
+            }, 450);
+          }
+        }
       }
     });
 
@@ -179,6 +216,7 @@ export const CleanOutputView: React.FC = () => {
       isMounted = false;
       clearTimeout(t1);
       clearTimeout(t2);
+      if (goalGraceTimerRef.current) clearTimeout(goalGraceTimerRef.current);
       if (reconnectIntervalRef.current) clearInterval(reconnectIntervalRef.current);
       document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
       window.removeEventListener('focus', handleVisibilityOrFocus);
@@ -296,6 +334,14 @@ export const CleanOutputView: React.FC = () => {
     );
   }
 
+  const isGoalVoiceEnabled = Boolean(syncState.goalVoiceEnabled);
+  const currentTriggerId = syncState.goalTriggerId ?? activeGoalTriggerId;
+  const isGoalActiveInOutput =
+    isGoalVoiceEnabled &&
+    currentTriggerId > 0 &&
+    currentTriggerId !== completedGoalTriggerId &&
+    (Boolean(syncState.goalActive) || activeGoalTriggerId === currentTriggerId);
+
   // Pure, clean synchronized output for TikTok LIVE Studio Window Capture
   return (
     <div
@@ -316,6 +362,18 @@ export const CleanOutputView: React.FC = () => {
         customStadiumImageUrl={customStadiumImageUrl}
         customStadiumVideoUrl={customStadiumVideoUrl}
         resolvedAvatarMediaUrls={resolveCharacterMediaUrls(syncState.character, avatarMediaUrlMap)}
+        goalVoiceEnabled={isGoalVoiceEnabled}
+        goalActive={isGoalActiveInOutput}
+        goalTriggerId={currentTriggerId}
+        onGoalPlaybackEnded={(endedId) => {
+          if (goalGraceTimerRef.current) {
+            clearTimeout(goalGraceTimerRef.current);
+            goalGraceTimerRef.current = null;
+          }
+          completedGoalTriggerIdRef.current = endedId;
+          setCompletedGoalTriggerId(endedId);
+          setActiveGoalTriggerId(0);
+        }}
         isCleanOutput={true}
       />
     </div>

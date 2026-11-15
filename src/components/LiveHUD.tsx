@@ -19,6 +19,8 @@ interface LiveHUDProps {
   realFps: number;
   cameraError: string | null;
   delegateMode: 'GPU' | 'CPU';
+  goalVoiceEnabled?: boolean;
+  goalActive?: boolean;
   onRetryCamera?: () => void;
   onStartSimulation?: () => void;
   onOpenGuide?: () => void;
@@ -31,23 +33,28 @@ export const LiveHUD: React.FC<LiveHUDProps> = ({
   realFps,
   cameraError,
   delegateMode,
+  goalVoiceEnabled = false,
+  goalActive = false,
   onRetryCamera,
   onStartSimulation,
   onOpenGuide,
 }) => {
-  const mouthStateLabel = !faceData.detected
-    ? 'SILENT'
-    : faceData.jawOpen > 0.30
-    ? 'BOCCA A'
-    : faceData.jawOpen > 0.16 && Math.max(faceData.mouthPucker, faceData.mouthFunnel || 0) > 0.42
-    ? 'BOCCA O'
-    : faceData.jawOpen > 0.16 && Math.max(faceData.mouthSmile, faceData.mouthStretch || 0) > 0.42
-    ? 'BOCCA E'
-    : faceData.jawOpen > 0.16
-    ? 'SPEAKING'
-    : (faceData.eyeBlinkLeft + faceData.eyeBlinkRight) / 2 > 0.45
-    ? 'BLINK'
-    : 'SILENT';
+  const mouthStateLabel =
+    goalVoiceEnabled && goalActive
+      ? 'GOAL!'
+      : !faceData.detected
+      ? 'SILENT'
+      : !goalVoiceEnabled && faceData.jawOpen > 0.30
+      ? 'BOCCA A'
+      : faceData.jawOpen > 0.16 && Math.max(faceData.mouthPucker, faceData.mouthFunnel || 0) > 0.42
+      ? 'BOCCA O'
+      : faceData.jawOpen > 0.16 && Math.max(faceData.mouthSmile, faceData.mouthStretch || 0) > 0.42
+      ? 'BOCCA E'
+      : faceData.jawOpen > 0.16
+      ? 'SPEAKING'
+      : (faceData.eyeBlinkLeft + faceData.eyeBlinkRight) / 2 > 0.45
+      ? 'BLINK'
+      : 'SILENT';
 
   const isDeviceInUse =
     cameraError?.toLowerCase().includes('device in use') ||

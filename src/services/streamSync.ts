@@ -26,6 +26,9 @@ export interface SyncPacket {
   stadiumBgSettings?: StadiumBackgroundSettings;
   customBgColor?: string;
   sourceWindowId?: string;
+  goalVoiceEnabled?: boolean;
+  goalActive?: boolean;
+  goalTriggerId?: number;
 }
 
 export interface SyncRequestPacket {

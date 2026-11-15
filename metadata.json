@@ -2,7 +2,8 @@
   "name": "TWINHITS FACECAM",
   "description": "App VTuber e Face Tracking in tempo reale con avatar cartoon per live streaming e telecronache.",
   "requestFramePermissions": [
-    "camera"
+    "camera",
+    "microphone"
   ],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"

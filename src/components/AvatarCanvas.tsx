@@ -32,6 +32,10 @@ interface AvatarCanvasProps {
   customStadiumImageUrl?: string | null;
   customStadiumVideoUrl?: string | null;
   resolvedAvatarMediaUrls?: Partial<Record<CharacterSlotKey, string>>;
+  goalVoiceEnabled?: boolean;
+  goalActive?: boolean;
+  goalTriggerId?: number;
+  onGoalPlaybackEnded?: (triggerId: number) => void;
   isCleanOutput?: boolean; // When true, zero badges, guides, or UI outlines are shown
 }
 
@@ -71,12 +75,17 @@ export const AvatarCanvas: React.FC<AvatarCanvasProps> = ({
   customStadiumImageUrl = null,
   customStadiumVideoUrl = null,
   resolvedAvatarMediaUrls,
+  goalVoiceEnabled = false,
+  goalActive = false,
+  goalTriggerId = 0,
+  onGoalPlaybackEnded,
   isCleanOutput = false,
 }) => {
   const { activeSlot, isSpeaking, transformStyle } = useCharacterAnimation(
     character,
     faceData,
-    settings
+    settings,
+    { goalVoiceEnabled, goalActive }
   );
 
   // Fixed logical stage dimensions: 720x1280 (9:16 vertical) or 1280x720 (16:9 horizontal)
@@ -349,6 +358,9 @@ export const AvatarCanvas: React.FC<AvatarCanvasProps> = ({
                     character={character}
                     activeSlot={activeSlot}
                     resolvedMediaUrls={resolvedAvatarMediaUrls}
+                    goalVoiceEnabled={goalVoiceEnabled}
+                    goalTriggerId={goalTriggerId}
+                    onGoalPlaybackEnded={onGoalPlaybackEnded}
                     mediaClassName={
                       isGreenScreen
                         ? 'shadow-none filter-none'
@@ -459,6 +471,9 @@ export const AvatarCanvas: React.FC<AvatarCanvasProps> = ({
                         character={character}
                         activeSlot={activeSlot}
                         resolvedMediaUrls={resolvedAvatarMediaUrls}
+                        goalVoiceEnabled={goalVoiceEnabled}
+                        goalTriggerId={goalTriggerId}
+                        onGoalPlaybackEnded={onGoalPlaybackEnded}
                         mediaClassName={
                           isGreenScreen
                             ? 'shadow-none filter-none'
