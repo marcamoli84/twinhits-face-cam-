@@ -10,6 +10,10 @@ import {
   StadiumBackgroundSettings,
   StadiumBackgroundPreset,
   CharacterSlotKey,
+  GoalEnginePreference,
+  GoalResolvedEngine,
+  GoalSpeechStatus,
+  AudioInputDeviceInfo,
 } from '../types/vtuber';
 import { STADIUM_ASSETS } from '../utils/stadiumAssets';
 import { CHARACTER_SLOTS, inferMediaType, resolveCharacterMediaUrls } from '../utils/avatarMedia';
@@ -113,10 +117,26 @@ interface ControlPanelProps {
   goalVoiceEnabled: boolean;
   onToggleGoalVoice: () => void;
   goalActive: boolean;
-  goalSpeechStatus: 'idle' | 'listening' | 'error';
+  goalSpeechStatus: GoalSpeechStatus;
+  goalEnginePreference: GoalEnginePreference;
+  goalResolvedEngine: GoalResolvedEngine;
+  isElectronEnv: boolean;
+  onChangeGoalEngine: (pref: GoalEnginePreference) => void;
   goalSpeechSupported: boolean;
   goalLastTranscript: string;
+  goalLastEvent: string;
   goalSpeechError: string | null;
+  goalCooldownSeconds: number;
+  onChangeGoalCooldown: (sec: number) => void;
+  goalCooldownRemainingMs: number;
+  availableMics: AudioInputDeviceInfo[];
+  selectedGoalMicId: string;
+  onSelectGoalMic: (micId: string) => void;
+  onRefreshMics: () => void;
+  voskModelStatus: 'checking' | 'bundled' | 'indexeddb' | 'missing';
+  voskModelFileName: string | null;
+  onImportVoskModel: (file: File) => void;
+  onRemoveVoskModel: () => void;
   hasMouthASlot: boolean;
   onTestGoalTrigger: () => void;
 
@@ -174,9 +194,25 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
   onToggleGoalVoice,
   goalActive,
   goalSpeechStatus,
+  goalEnginePreference,
+  goalResolvedEngine,
+  isElectronEnv,
+  onChangeGoalEngine,
   goalSpeechSupported,
   goalLastTranscript,
+  goalLastEvent,
   goalSpeechError,
+  goalCooldownSeconds,
+  onChangeGoalCooldown,
+  goalCooldownRemainingMs,
+  availableMics,
+  selectedGoalMicId,
+  onSelectGoalMic,
+  onRefreshMics,
+  voskModelStatus,
+  voskModelFileName,
+  onImportVoskModel,
+  onRemoveVoskModel,
   hasMouthASlot,
   onTestGoalTrigger,
   isLayoutLocked,
@@ -436,97 +472,315 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
               <Mic className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="text-sm font-bold text-white uppercase tracking-wider">
-                GOAL con la voce
-              </h3>
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-bold text-white uppercase tracking-wider">
+                  GOAL con la voce
+                </h3>
+                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 border border-zinc-700">
+                  {goalResolvedEngine === 'vosk' ? 'Vosk Offline' : 'Web Speech'}
+                </span>
+              </div>
               <p className="text-[11px] text-zinc-400">
-                Attiva <strong className="text-zinc-200">BOCCA A</strong> solo pronunciando &quot;GOAL&quot; o &quot;GOL&quot;
+                Attiva <strong className="text-zinc-200">BOCCA A</strong> solo dicendo &quot;GOL&quot;, &quot;GOAL&quot; o &quot;GOOOL&quot;
               </p>
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={onToggleGoalVoice}
-            disabled={!goalSpeechSupported && !goalVoiceEnabled}
-            className={`px-3.5 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition shadow-lg ${
-              goalVoiceEnabled
-                ? 'bg-amber-500 hover:bg-amber-400 text-black shadow-amber-500/25 ring-2 ring-amber-400/50'
-                : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed'
-            }`}
-          >
-            {goalVoiceEnabled ? 'ATTIVO' : 'DISATTIVO'}
-          </button>
-        </div>
-
-        <div className="text-[11px] rounded-xl px-3 py-2 bg-zinc-950/80 border border-zinc-800 text-zinc-300 leading-relaxed">
-          {goalVoiceEnabled ? (
-            <>
-              <span className="font-bold text-amber-300">Modalità GOAL attiva:</span> l&apos;apertura
-              normale della bocca e le vocali (es. &quot;A&quot;) NON attivano più Bocca A.{' '}
-              <strong className="text-white">SILENT</strong> e{' '}
-              <strong className="text-white">SPEAKING</strong> continuano a seguire la webcam;{' '}
-              <strong className="text-amber-300">BOCCA A</strong> parte dall&apos;inizio una sola
-              volta solo quando dici <strong className="text-white">&quot;GOAL&quot;</strong> o{' '}
-              <strong className="text-white">&quot;GOL&quot;</strong>.
-            </>
-          ) : (
-            <>
-              Modalità disattivata: <strong className="text-zinc-200">BOCCA A</strong> funziona
-              normalmente con l&apos;apertura ampia della bocca rilevata dalla webcam.
-            </>
-          )}
-        </div>
-
-        {goalVoiceEnabled && (
-          <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-            <div className="flex items-center gap-2 text-[11px]">
-              <span
-                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border font-semibold ${
-                  goalActive
-                    ? 'bg-red-600/30 border-red-500 text-red-200 animate-pulse'
-                    : goalSpeechStatus === 'listening'
-                    ? 'bg-emerald-950/70 border-emerald-500/60 text-emerald-300'
-                    : 'bg-zinc-900 border-zinc-700 text-zinc-400'
-                }`}
-              >
-                <span
-                  className={`w-2 h-2 rounded-full ${
-                    goalActive
-                      ? 'bg-red-400'
-                      : goalSpeechStatus === 'listening'
-                      ? 'bg-emerald-400 animate-pulse'
-                      : 'bg-zinc-500'
-                  }`}
-                />
-                {goalActive
-                  ? 'GOAL IN RIPRODUZIONE!'
-                  : goalSpeechStatus === 'listening'
-                  ? 'In ascolto ("GOAL" / "GOL")'
-                  : 'Avvio ascolto...'}
-              </span>
-
-              {goalLastTranscript && (
-                <span
-                  className="text-[11px] font-mono text-zinc-400 truncate max-w-[165px]"
-                  title={goalLastTranscript}
-                >
-                  &ldquo;{goalLastTranscript}&rdquo;
-                </span>
-              )}
-            </div>
-
+          <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={onTestGoalTrigger}
               disabled={!hasMouthASlot}
               title="Simula il comando vocale GOAL per verificare la riproduzione dall'inizio"
-              className="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 text-amber-300 border border-zinc-700 text-[11px] font-bold transition"
+              className="px-2.5 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 text-amber-300 border border-zinc-700 text-[11px] font-bold transition"
             >
               Test GOAL
             </button>
+
+            <button
+              type="button"
+              onClick={onToggleGoalVoice}
+              disabled={
+                !goalVoiceEnabled &&
+                goalResolvedEngine === 'webspeech' &&
+                !goalSpeechSupported
+              }
+              className={`px-3.5 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition shadow-lg ${
+                goalVoiceEnabled
+                  ? 'bg-amber-500 hover:bg-amber-400 text-black shadow-amber-500/25 ring-2 ring-amber-400/50'
+                  : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed'
+              }`}
+            >
+              {goalVoiceEnabled ? 'ATTIVO' : 'DISATTIVO'}
+            </button>
+          </div>
+        </div>
+
+        {/* Stato separato e reale del riconoscimento vocale */}
+        <div className="flex flex-wrap items-center justify-between gap-2 bg-zinc-950/75 border border-zinc-800/90 rounded-xl px-3 py-2">
+          <div className="flex items-center gap-2 text-[11px]">
+            {(() => {
+              const isErrorState =
+                goalSpeechStatus === 'model_unavailable' ||
+                goalSpeechStatus === 'mic_unavailable' ||
+                goalSpeechStatus === 'permission_denied' ||
+                goalSpeechStatus === 'unsupported' ||
+                goalSpeechStatus === 'error';
+
+              const statusBadge = goalActive
+                ? {
+                    cls: 'bg-red-600/30 border-red-500 text-red-200 animate-pulse',
+                    dot: 'bg-red-400',
+                    label: 'GOAL IN RIPRODUZIONE!',
+                  }
+                : isErrorState
+                ? {
+                    cls: 'bg-red-950/80 border-red-500/70 text-red-300',
+                    dot: 'bg-red-500',
+                    label:
+                      goalSpeechStatus === 'model_unavailable'
+                        ? 'Modello non disponibile'
+                        : goalSpeechStatus === 'mic_unavailable'
+                        ? 'Microfono non disponibile'
+                        : goalSpeechStatus === 'permission_denied'
+                        ? 'Permesso negato'
+                        : goalSpeechStatus === 'unsupported'
+                        ? 'Motore non supportato'
+                        : 'Errore riconoscimento',
+                  }
+                : goalSpeechStatus === 'loading_model'
+                ? {
+                    cls: 'bg-amber-950/70 border-amber-500/60 text-amber-300',
+                    dot: 'bg-amber-400 animate-pulse',
+                    label: 'Caricamento modello offline...',
+                  }
+                : goalSpeechStatus === 'listening'
+                ? {
+                    cls: 'bg-emerald-950/70 border-emerald-500/60 text-emerald-300',
+                    dot: 'bg-emerald-400 animate-pulse',
+                    label: 'In ascolto',
+                  }
+                : {
+                    cls: 'bg-zinc-900 border-zinc-700 text-zinc-400',
+                    dot: 'bg-zinc-500',
+                    label: 'Disattivo',
+                  };
+
+              return (
+                <span
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border font-semibold ${statusBadge.cls}`}
+                >
+                  <span className={`w-2 h-2 rounded-full ${statusBadge.dot}`} />
+                  {statusBadge.label}
+                </span>
+              );
+            })()}
+
+            {goalCooldownRemainingMs > 0 && (
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-950/60 border border-amber-600/40 text-amber-300">
+                Pausa: {Math.ceil(goalCooldownRemainingMs / 1000)}s
+              </span>
+            )}
+          </div>
+
+          <span className="text-[10px] font-mono text-zinc-400">
+            {isElectronEnv ? 'Desktop EXE' : 'Browser'} •{' '}
+            {goalResolvedEngine === 'vosk' ? 'Vosk Offline' : 'Web Speech API'}
+          </span>
+        </div>
+
+        {/* Motore di riconoscimento vocale */}
+        <div className="space-y-1.5">
+          <label className="text-[11px] font-semibold text-zinc-300 block">
+            Motore Riconoscimento Vocale
+          </label>
+          <div className="grid grid-cols-3 gap-1.5">
+            {(
+              [
+                { id: 'auto', label: 'Auto' },
+                { id: 'webspeech', label: 'Browser (Chrome)' },
+                { id: 'vosk', label: 'Offline (Vosk EXE)' },
+              ] as { id: GoalEnginePreference; label: string }[]
+            ).map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={() => onChangeGoalEngine(opt.id)}
+                className={`py-1.5 px-2 rounded-lg text-[11px] font-semibold border transition ${
+                  goalEnginePreference === opt.id
+                    ? 'bg-amber-500/20 border-amber-500 text-amber-300'
+                    : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:text-zinc-200'
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Scelta Microfono (condiviso, senza bloccare TikTok LIVE Studio) */}
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between">
+            <label className="text-[11px] font-semibold text-zinc-300">
+              Microfono per riconoscimento GOAL
+            </label>
+            <button
+              type="button"
+              onClick={onRefreshMics}
+              className="flex items-center gap-1 text-[10px] text-zinc-400 hover:text-white"
+              title="Aggiorna elenco microfoni"
+            >
+              <RefreshCw className="w-3 h-3" /> Aggiorna
+            </button>
+          </div>
+          <select
+            value={selectedGoalMicId}
+            onChange={(e) => onSelectGoalMic(e.target.value)}
+            className="w-full bg-zinc-950 border border-zinc-700 hover:border-zinc-600 rounded-xl px-3 py-2 text-xs text-zinc-200 focus:outline-none focus:border-amber-500 transition"
+          >
+            <option value="">Predefinito di sistema (Windows / Browser)</option>
+            {availableMics.map((mic, idx) => (
+              <option key={mic.deviceId || idx} value={mic.deviceId}>
+                {mic.label}
+              </option>
+            ))}
+          </select>
+          <div className="text-[10px] text-zinc-400 flex flex-col gap-0.5">
+            <span>
+              Dispositivo in uso:{' '}
+              <strong className="text-zinc-200">
+                {goalResolvedEngine === 'webspeech'
+                  ? 'Microfono predefinito di Chrome (Web Speech)'
+                  : availableMics.find((m) => m.deviceId === selectedGoalMicId)?.label ||
+                    'Predefinito di sistema'}
+              </strong>
+            </span>
+            <span className="text-zinc-500">
+              Acquisizione condivisa e muta in altoparlanti: non interrompe il microfono di TikTok LIVE Studio.
+            </span>
+          </div>
+        </div>
+
+        {/* Intervallo minimo tra due attivazioni */}
+        <div className="space-y-1">
+          <div className="flex items-center justify-between text-[11px]">
+            <span className="font-semibold text-zinc-300">
+              Intervallo minimo tra attivazioni
+            </span>
+            <span className="font-mono text-amber-300 font-bold">{goalCooldownSeconds}s</span>
+          </div>
+          <input
+            type="range"
+            min="1"
+            max="15"
+            step="1"
+            value={goalCooldownSeconds}
+            onChange={(e) => onChangeGoalCooldown(Number(e.target.value))}
+            className="w-full accent-amber-500 cursor-pointer"
+          />
+          <p className="text-[10px] text-zinc-500">
+            Riduce ripetizioni ravvicinate dopo un GOAL (il riconoscimento vocale può comunque avere occasionali falsi rilevamenti).
+          </p>
+        </div>
+
+        {/* Modello Offline Vosk (.tar.gz) */}
+        {(goalResolvedEngine === 'vosk' || isElectronEnv) && (
+          <div className="p-2.5 rounded-xl bg-zinc-950/90 border border-zinc-800 space-y-2 text-[11px]">
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-semibold text-zinc-300">Modello Italiano Vosk Offline</span>
+              <span
+                className={`text-[10px] font-mono px-2 py-0.5 rounded border ${
+                  voskModelStatus === 'checking'
+                    ? 'bg-zinc-900 border-zinc-700 text-zinc-400'
+                    : voskModelStatus === 'missing'
+                    ? 'bg-red-950/60 border-red-500/40 text-red-300'
+                    : 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300'
+                }`}
+              >
+                {voskModelStatus === 'checking'
+                  ? 'Verifica...'
+                  : voskModelStatus === 'bundled'
+                  ? 'Trovato in models/'
+                  : voskModelStatus === 'indexeddb'
+                  ? `Importato (${voskModelFileName || 'custom.tar.gz'})`
+                  : 'Non trovato'}
+              </span>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 text-[11px] font-semibold cursor-pointer transition">
+                <Upload className="w-3.5 h-3.5 text-amber-400" />
+                <span>Importa modello (.tar.gz)</span>
+                <input
+                  type="file"
+                  accept=".tar.gz,.tgz,application/gzip,application/x-gzip"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) onImportVoskModel(file);
+                    e.target.value = '';
+                  }}
+                />
+              </label>
+
+              {voskModelStatus === 'indexeddb' && (
+                <button
+                  type="button"
+                  onClick={onRemoveVoskModel}
+                  className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-zinc-900 hover:bg-red-950/60 text-zinc-400 hover:text-red-300 border border-zinc-800 text-[11px] transition"
+                >
+                  <Trash2 className="w-3.5 h-3.5" /> Rimuovi importato
+                </button>
+              )}
+            </div>
+
+            {voskModelStatus === 'missing' && (
+              <p className="text-[10px] text-zinc-400 leading-relaxed">
+                Per l&apos;uso offline in Electron EXE scarica{' '}
+                <code className="text-amber-300">vosk-model-small-it-0.22</code>, convertilo in{' '}
+                <code className="text-amber-300">vosk-model-small-it-0.22.tar.gz</code> e copialo in{' '}
+                <code className="text-zinc-200">public/models/</code> (oppure importalo qui sopra).
+              </p>
+            )}
           </div>
         )}
+
+        {/* Area testo riconosciuto / ultimo evento solo nel pannello di controllo */}
+        {(goalLastTranscript || goalLastEvent) && (
+          <div className="text-[11px] rounded-xl px-3 py-2 bg-zinc-950/90 border border-zinc-800 space-y-1">
+            {goalLastTranscript && (
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-zinc-500">Testo rilevato:</span>
+                <span className="font-mono text-zinc-200 truncate max-w-[220px]" title={goalLastTranscript}>
+                  &ldquo;{goalLastTranscript}&rdquo;
+                </span>
+              </div>
+            )}
+            {goalLastEvent && (
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-zinc-500">Ultimo evento:</span>
+                <span className="font-mono text-amber-300 truncate max-w-[220px]" title={goalLastEvent}>
+                  {goalLastEvent}
+                </span>
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="text-[10px] rounded-xl px-3 py-2 bg-zinc-950/60 border border-zinc-800/80 text-zinc-400 leading-relaxed">
+          {goalVoiceEnabled ? (
+            <>
+              <strong className="text-amber-300">Modalità GOAL attiva:</strong> apertura normale della
+              bocca e vocali non attivano BOCCA A. <strong className="text-zinc-200">SILENT</strong> e{' '}
+              <strong className="text-zinc-200">SPEAKING</strong> continuano a seguire la webcam.
+            </>
+          ) : (
+            <>
+              Modalità disattivata: <strong className="text-zinc-200">BOCCA A</strong> segue
+              normalmente l&apos;apertura ampia della bocca dalla webcam.
+            </>
+          )}
+        </div>
 
         {goalVoiceEnabled && !hasMouthASlot && (
           <div className="p-2.5 rounded-xl bg-amber-950/50 border border-amber-500/40 text-[11px] text-amber-200">
@@ -535,15 +789,8 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
           </div>
         )}
 
-        {!goalSpeechSupported && (
-          <div className="p-2.5 rounded-xl bg-red-950/50 border border-red-500/40 text-[11px] text-red-200">
-            Il riconoscimento vocale Web Speech API non è disponibile in questo browser. Usa Google
-            Chrome su Windows desktop.
-          </div>
-        )}
-
         {goalSpeechError && (
-          <div className="p-2.5 rounded-xl bg-red-950/70 border border-red-500/60 text-[11px] text-red-200">
+          <div className="p-2.5 rounded-xl bg-red-950/75 border border-red-500/70 text-[11px] text-red-200 leading-relaxed">
             {goalSpeechError}
           </div>
         )}

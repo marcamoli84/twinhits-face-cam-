@@ -16,10 +16,23 @@ import {
   StadiumBackgroundSettings,
   StadiumBackgroundPreset,
   CharacterSlotKey,
+  GoalEnginePreference,
+  GoalSpeechStatus,
+  AudioInputDeviceInfo,
 } from './types/vtuber';
 import { DEFAULT_CHARACTERS } from './utils/defaultCharacters';
 import { CHARACTER_SLOTS, hasCharacterSlot, resolveCharacterMediaUrls } from './utils/avatarMedia';
-import { GoalSpeechRecognizer, isGoalSpeechSupported } from './services/goalSpeechService';
+import {
+  enumerateAudioInputDevices,
+  GoalSpeechRecognizer,
+  isElectronDesktop,
+  isGoalSpeechSupported,
+  resolveGoalEngine,
+} from './services/goalSpeechService';
+import {
+  probeVoskModelAvailability,
+  VoskGoalRecognizer,
+} from './services/voskGoalService';
 import {
   getFaceLandmarker,
   extractFaceData,
@@ -45,6 +58,8 @@ import {
   saveAvatarMediaBlob,
   loadAvatarMediaBlob,
   deleteAvatarMediaBlob,
+  saveVoskModelBlob,
+  deleteVoskModelBlob,
 } from './services/characterStorage';
 import {
   Radio,
@@ -240,14 +255,52 @@ function StudioMasterView() {
   const isLayoutLockedRef = useRef<boolean>(isLayoutLocked);
   isLayoutLockedRef.current = isLayoutLocked;
 
-  // "GOAL con la voce" state (disables MediaPipe mouthA and triggers mouthA once on spoken GOAL/GOL)
+  // "GOAL con la voce" state (Web Speech in Browser / Vosk Offline in Electron EXE)
+  const isElectronEnv = isElectronDesktop();
   const [goalVoiceEnabled, setGoalVoiceEnabled] = useState<boolean>(false);
   const [goalActive, setGoalActive] = useState<boolean>(false);
   const [goalTriggerId, setGoalTriggerId] = useState<number>(0);
-  const [goalSpeechStatus, setGoalSpeechStatus] = useState<'idle' | 'listening' | 'error'>('idle');
+  const [goalSpeechStatus, setGoalSpeechStatus] = useState<GoalSpeechStatus>('idle');
+  const [goalEnginePreference, setGoalEnginePreference] = useState<GoalEnginePreference>(() => {
+    try {
+      const saved = localStorage.getItem('twinhits_goal_engine') as GoalEnginePreference | null;
+      if (saved === 'auto' || saved === 'webspeech' || saved === 'vosk') return saved;
+    } catch {
+      // ignore
+    }
+    return 'auto';
+  });
+  const [goalCooldownSeconds, setGoalCooldownSeconds] = useState<number>(() => {
+    try {
+      const saved = Number(localStorage.getItem('twinhits_goal_cooldown_sec'));
+      if (!Number.isNaN(saved) && saved >= 1 && saved <= 15) return saved;
+    } catch {
+      // ignore
+    }
+    return 5;
+  });
+  const [goalCooldownRemainingMs, setGoalCooldownRemainingMs] = useState<number>(0);
+  const [availableMics, setAvailableMics] = useState<AudioInputDeviceInfo[]>([]);
+  const [selectedGoalMicId, setSelectedGoalMicId] = useState<string>(() => {
+    try {
+      return localStorage.getItem('twinhits_goal_mic_id') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [voskModelStatus, setVoskModelStatus] = useState<'checking' | 'bundled' | 'indexeddb' | 'missing'>('checking');
+  const [voskModelFileName, setVoskModelFileName] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem('twinhits_vosk_model_name');
+    } catch {
+      return null;
+    }
+  });
   const [goalLastTranscript, setGoalLastTranscript] = useState<string>('');
+  const [goalLastEvent, setGoalLastEvent] = useState<string>('');
   const [goalSpeechError, setGoalSpeechError] = useState<string | null>(null);
   const goalSpeechSupported = isGoalSpeechSupported();
+  const goalResolvedEngine = resolveGoalEngine(goalEnginePreference);
 
   // Tracking & Webcam state
   const [isTracking, setIsTracking] = useState(false);
@@ -439,7 +492,16 @@ function StudioMasterView() {
   goalActiveRef.current = goalActive;
   const goalTriggerIdRef = useRef<number>(goalTriggerId);
   goalTriggerIdRef.current = goalTriggerId;
+  const goalEnginePreferenceRef = useRef<GoalEnginePreference>(goalEnginePreference);
+  goalEnginePreferenceRef.current = goalEnginePreference;
+  const goalCooldownSecondsRef = useRef<number>(goalCooldownSeconds);
+  goalCooldownSecondsRef.current = goalCooldownSeconds;
+  const selectedGoalMicIdRef = useRef<string>(selectedGoalMicId);
+  selectedGoalMicIdRef.current = selectedGoalMicId;
+  const lastVoiceGoalTriggerAtRef = useRef<number>(0);
+  const goalCooldownTimerRef = useRef<number | null>(null);
   const goalSpeechRecognizerRef = useRef<GoalSpeechRecognizer | null>(null);
+  const voskGoalRecognizerRef = useRef<VoskGoalRecognizer | null>(null);
   const goalSafetyTimerRef = useRef<number | null>(null);
 
   // Initialize and load from IndexedDB on startup
@@ -456,6 +518,26 @@ function StudioMasterView() {
         }
         if (typeof cfg.isLayoutLocked === 'boolean') {
           setIsLayoutLocked(cfg.isLayoutLocked);
+        }
+        if (
+          cfg.goalEnginePreference === 'auto' ||
+          cfg.goalEnginePreference === 'webspeech' ||
+          cfg.goalEnginePreference === 'vosk'
+        ) {
+          setGoalEnginePreference(cfg.goalEnginePreference);
+        }
+        if (typeof cfg.goalMicId === 'string') {
+          setSelectedGoalMicId(cfg.goalMicId);
+        }
+        if (
+          typeof cfg.goalCooldownSeconds === 'number' &&
+          cfg.goalCooldownSeconds >= 1 &&
+          cfg.goalCooldownSeconds <= 15
+        ) {
+          setGoalCooldownSeconds(cfg.goalCooldownSeconds);
+        }
+        if (typeof cfg.voskModelFileName === 'string') {
+          setVoskModelFileName(cfg.voskModelFileName);
         }
 
         const [storedStadiumImg, storedStadiumVideo] = await Promise.all([
@@ -573,6 +655,64 @@ function StudioMasterView() {
     []
   );
 
+  const refreshMics = useCallback(async () => {
+    try {
+      const mics = await enumerateAudioInputDevices();
+      setAvailableMics(mics);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const refreshVoskModelStatus = useCallback(async () => {
+    setVoskModelStatus('checking');
+    const probe = await probeVoskModelAvailability();
+    if (!probe.available) {
+      setVoskModelStatus('missing');
+    } else {
+      setVoskModelStatus(probe.source === 'indexeddb' ? 'indexeddb' : 'bundled');
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshMics();
+    refreshVoskModelStatus();
+    if (typeof navigator !== 'undefined' && navigator.mediaDevices?.addEventListener) {
+      navigator.mediaDevices.addEventListener('devicechange', refreshMics);
+      return () => {
+        navigator.mediaDevices.removeEventListener('devicechange', refreshMics);
+      };
+    }
+    return undefined;
+  }, [refreshMics, refreshVoskModelStatus]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('twinhits_goal_engine', goalEnginePreference);
+    } catch {
+      // ignore
+    }
+    saveAppConfig({ goalEnginePreference });
+  }, [goalEnginePreference]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('twinhits_goal_cooldown_sec', String(goalCooldownSeconds));
+    } catch {
+      // ignore
+    }
+    saveAppConfig({ goalCooldownSeconds });
+  }, [goalCooldownSeconds]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('twinhits_goal_mic_id', selectedGoalMicId);
+    } catch {
+      // ignore
+    }
+    saveAppConfig({ goalMicId: selectedGoalMicId });
+  }, [selectedGoalMicId]);
+
   const clearGoalSafetyTimer = useCallback(() => {
     if (goalSafetyTimerRef.current !== null) {
       clearTimeout(goalSafetyTimerRef.current);
@@ -580,27 +720,83 @@ function StudioMasterView() {
     }
   }, []);
 
-  const triggerGoalPlayback = useCallback(() => {
-    if (!hasCharacterSlot(activeCharacterRef.current, 'mouthA')) {
-      return;
+  const stopAllGoalRecognizers = useCallback((keepStatus = false) => {
+    if (goalSpeechRecognizerRef.current) {
+      goalSpeechRecognizerRef.current.stop();
     }
-    clearGoalSafetyTimer();
-    const nextId = goalTriggerIdRef.current + 1;
-    goalTriggerIdRef.current = nextId;
-    goalActiveRef.current = true;
-    setGoalTriggerId(nextId);
-    setGoalActive(true);
-    broadcastCurrentState();
+    if (voskGoalRecognizerRef.current) {
+      voskGoalRecognizerRef.current.stop();
+    }
+    if (!keepStatus) {
+      setGoalSpeechStatus('idle');
+    }
+  }, []);
 
-    // Generous safety fallback only if video ended event never arrives (e.g. broken file)
-    goalSafetyTimerRef.current = window.setTimeout(() => {
-      if (goalTriggerIdRef.current === nextId && goalActiveRef.current) {
-        goalActiveRef.current = false;
-        setGoalActive(false);
-        broadcastCurrentState();
+  const triggerGoalPlayback = useCallback(
+    (sourceLabel?: string) => {
+      if (!hasCharacterSlot(activeCharacterRef.current, 'mouthA')) {
+        return;
       }
-    }, 25000);
-  }, [broadcastCurrentState, clearGoalSafetyTimer]);
+      clearGoalSafetyTimer();
+      const nextId = goalTriggerIdRef.current + 1;
+      goalTriggerIdRef.current = nextId;
+      goalActiveRef.current = true;
+      setGoalTriggerId(nextId);
+      setGoalActive(true);
+      if (sourceLabel) {
+        setGoalLastEvent(sourceLabel);
+      }
+      broadcastCurrentState();
+
+      // Generous safety fallback only if video ended event never arrives (e.g. broken file)
+      goalSafetyTimerRef.current = window.setTimeout(() => {
+        if (goalTriggerIdRef.current === nextId && goalActiveRef.current) {
+          goalActiveRef.current = false;
+          setGoalActive(false);
+          broadcastCurrentState();
+        }
+      }, 25000);
+    },
+    [broadcastCurrentState, clearGoalSafetyTimer]
+  );
+
+  const startCooldownCountdown = useCallback((durationMs: number) => {
+    if (goalCooldownTimerRef.current !== null) {
+      clearInterval(goalCooldownTimerRef.current);
+      goalCooldownTimerRef.current = null;
+    }
+    const deadline = Date.now() + durationMs;
+    setGoalCooldownRemainingMs(durationMs);
+    goalCooldownTimerRef.current = window.setInterval(() => {
+      const rem = Math.max(0, deadline - Date.now());
+      setGoalCooldownRemainingMs(rem);
+      if (rem <= 0 && goalCooldownTimerRef.current !== null) {
+        clearInterval(goalCooldownTimerRef.current);
+        goalCooldownTimerRef.current = null;
+      }
+    }, 250);
+  }, []);
+
+  const handleVoiceGoalDetected = useCallback(
+    (transcript: string) => {
+      setGoalLastTranscript(transcript);
+      if (!goalVoiceEnabledRef.current) return;
+
+      const now = Date.now();
+      const cooldownMs = goalCooldownSecondsRef.current * 1000;
+      const elapsed = now - lastVoiceGoalTriggerAtRef.current;
+      if (lastVoiceGoalTriggerAtRef.current > 0 && elapsed < cooldownMs) {
+        const remSec = Math.ceil((cooldownMs - elapsed) / 1000);
+        setGoalLastEvent(`GOAL ignorato (pausa ${remSec}s)`);
+        return;
+      }
+
+      lastVoiceGoalTriggerAtRef.current = now;
+      startCooldownCountdown(cooldownMs);
+      triggerGoalPlayback(`GOAL rilevato ("${transcript}")`);
+    },
+    [startCooldownCountdown, triggerGoalPlayback]
+  );
 
   const handleGoalPlaybackEnded = useCallback(
     (endedTriggerId: number) => {
@@ -615,9 +811,80 @@ function StudioMasterView() {
     [broadcastCurrentState, clearGoalSafetyTimer]
   );
 
+  const startSelectedGoalEngine = useCallback(
+    async (prefOverride?: GoalEnginePreference, micOverride?: string) => {
+      const engine = resolveGoalEngine(prefOverride ?? goalEnginePreferenceRef.current);
+      const micId = micOverride !== undefined ? micOverride : selectedGoalMicIdRef.current;
+
+      setGoalSpeechError(null);
+      setGoalLastTranscript('');
+      setGoalLastEvent('');
+      goalVoiceEnabledRef.current = true;
+      goalActiveRef.current = false;
+      setGoalVoiceEnabled(true);
+      setGoalActive(false);
+      broadcastCurrentState();
+
+      const callbacks = {
+        onGoalDetected: (transcript: string) => {
+          handleVoiceGoalDetected(transcript);
+        },
+        onTranscript: (transcript: string) => {
+          setGoalLastTranscript(transcript);
+        },
+        onStatusChange: (status: GoalSpeechStatus) => {
+          setGoalSpeechStatus(status);
+          if (
+            status === 'model_unavailable' ||
+            status === 'mic_unavailable' ||
+            status === 'permission_denied' ||
+            status === 'unsupported' ||
+            status === 'error'
+          ) {
+            goalVoiceEnabledRef.current = false;
+            goalActiveRef.current = false;
+            setGoalVoiceEnabled(false);
+            setGoalActive(false);
+            broadcastCurrentState();
+          }
+        },
+        onError: (msg: string) => {
+          setGoalSpeechError(msg);
+          setGoalLastEvent('Errore riconoscimento');
+        },
+      };
+
+      if (engine === 'vosk') {
+        if (goalSpeechRecognizerRef.current) {
+          goalSpeechRecognizerRef.current.stop();
+        }
+        if (!voskGoalRecognizerRef.current) {
+          voskGoalRecognizerRef.current = new VoskGoalRecognizer(callbacks);
+        } else {
+          voskGoalRecognizerRef.current.updateCallbacks(callbacks);
+        }
+        const ok = await voskGoalRecognizerRef.current.start(micId || undefined);
+        if (ok) {
+          await refreshMics();
+        }
+      } else {
+        if (voskGoalRecognizerRef.current) {
+          voskGoalRecognizerRef.current.stop();
+        }
+        if (!goalSpeechRecognizerRef.current) {
+          goalSpeechRecognizerRef.current = new GoalSpeechRecognizer(callbacks);
+        } else {
+          goalSpeechRecognizerRef.current.updateCallbacks(callbacks);
+        }
+        goalSpeechRecognizerRef.current.start();
+      }
+    },
+    [broadcastCurrentState, handleVoiceGoalDetected, refreshMics]
+  );
+
   const handleToggleGoalVoice = useCallback(() => {
-    if (goalVoiceEnabledRef.current) {
-      goalSpeechRecognizerRef.current?.stop();
+    if (goalVoiceEnabledRef.current || goalSpeechStatus === 'loading_model') {
+      stopAllGoalRecognizers(false);
       clearGoalSafetyTimer();
       goalVoiceEnabledRef.current = false;
       goalActiveRef.current = false;
@@ -630,61 +897,85 @@ function StudioMasterView() {
       return;
     }
 
-    setGoalSpeechError(null);
-    setGoalLastTranscript('');
-    goalVoiceEnabledRef.current = true;
-    goalActiveRef.current = false;
-    setGoalVoiceEnabled(true);
-    setGoalActive(false);
-    broadcastCurrentState();
+    void startSelectedGoalEngine();
+  }, [broadcastCurrentState, clearGoalSafetyTimer, goalSpeechStatus, startSelectedGoalEngine, stopAllGoalRecognizers]);
 
-    const callbacks = {
-      onGoalDetected: (transcript: string) => {
-        setGoalLastTranscript(transcript);
-        if (goalVoiceEnabledRef.current) {
-          triggerGoalPlayback();
+  const handleChangeGoalEngine = useCallback(
+    (pref: GoalEnginePreference) => {
+      goalEnginePreferenceRef.current = pref;
+      setGoalEnginePreference(pref);
+      setGoalSpeechError(null);
+      if (goalVoiceEnabledRef.current) {
+        stopAllGoalRecognizers(true);
+        void startSelectedGoalEngine(pref);
+      } else {
+        setGoalSpeechStatus('idle');
+      }
+    },
+    [startSelectedGoalEngine, stopAllGoalRecognizers]
+  );
+
+  const handleSelectGoalMic = useCallback(
+    (micId: string) => {
+      selectedGoalMicIdRef.current = micId;
+      setSelectedGoalMicId(micId);
+      if (goalVoiceEnabledRef.current && resolveGoalEngine(goalEnginePreferenceRef.current) === 'vosk') {
+        stopAllGoalRecognizers(true);
+        void startSelectedGoalEngine(undefined, micId);
+      }
+    },
+    [startSelectedGoalEngine, stopAllGoalRecognizers]
+  );
+
+  const handleImportVoskModel = useCallback(
+    async (file: File) => {
+      try {
+        setGoalSpeechError(null);
+        await saveVoskModelBlob(file);
+        voskGoalRecognizerRef.current?.invalidateCachedModel();
+        setVoskModelFileName(file.name);
+        try {
+          localStorage.setItem('twinhits_vosk_model_name', file.name);
+        } catch {
+          // ignore
         }
-      },
-      onTranscript: (transcript: string) => {
-        setGoalLastTranscript(transcript);
-      },
-      onStatusChange: (status: 'idle' | 'listening' | 'error') => {
-        setGoalSpeechStatus(status);
-      },
-      onError: (msg: string) => {
-        setGoalSpeechError(msg);
-        if (
-          msg.toLowerCase().includes('negato') ||
-          msg.toLowerCase().includes('nessun microfono') ||
-          msg.toLowerCase().includes('non supportato')
-        ) {
-          goalVoiceEnabledRef.current = false;
-          goalActiveRef.current = false;
-          setGoalVoiceEnabled(false);
-          setGoalActive(false);
-          broadcastCurrentState();
-        }
-      },
-    };
+        await saveAppConfig({ voskModelFileName: file.name });
+        setVoskModelStatus('indexeddb');
+        setGoalLastEvent(`Modello importato: ${file.name}`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setGoalSpeechError(`Impossibile salvare il modello Vosk: ${msg}`);
+      }
+    },
+    []
+  );
 
-    if (!goalSpeechRecognizerRef.current) {
-      goalSpeechRecognizerRef.current = new GoalSpeechRecognizer(callbacks);
-    } else {
-      goalSpeechRecognizerRef.current.updateCallbacks(callbacks);
-    }
-
-    const started = goalSpeechRecognizerRef.current.start();
-    if (!started) {
+  const handleRemoveVoskModel = useCallback(async () => {
+    if (goalVoiceEnabledRef.current && resolveGoalEngine(goalEnginePreferenceRef.current) === 'vosk') {
+      stopAllGoalRecognizers(false);
       goalVoiceEnabledRef.current = false;
       setGoalVoiceEnabled(false);
       broadcastCurrentState();
     }
-  }, [broadcastCurrentState, clearGoalSafetyTimer, triggerGoalPlayback]);
+    voskGoalRecognizerRef.current?.invalidateCachedModel();
+    await deleteVoskModelBlob();
+    setVoskModelFileName(null);
+    try {
+      localStorage.removeItem('twinhits_vosk_model_name');
+    } catch {
+      // ignore
+    }
+    await refreshVoskModelStatus();
+  }, [broadcastCurrentState, refreshVoskModelStatus, stopAllGoalRecognizers]);
 
   useEffect(() => {
     return () => {
       clearGoalSafetyTimer();
+      if (goalCooldownTimerRef.current !== null) {
+        clearInterval(goalCooldownTimerRef.current);
+      }
       goalSpeechRecognizerRef.current?.stop();
+      voskGoalRecognizerRef.current?.destroy();
     };
   }, [clearGoalSafetyTimer]);
 
@@ -1789,11 +2080,27 @@ function StudioMasterView() {
             onToggleGoalVoice={handleToggleGoalVoice}
             goalActive={goalActive}
             goalSpeechStatus={goalSpeechStatus}
+            goalEnginePreference={goalEnginePreference}
+            goalResolvedEngine={goalResolvedEngine}
+            isElectronEnv={isElectronEnv}
+            onChangeGoalEngine={handleChangeGoalEngine}
             goalSpeechSupported={goalSpeechSupported}
             goalLastTranscript={goalLastTranscript}
+            goalLastEvent={goalLastEvent}
             goalSpeechError={goalSpeechError}
+            goalCooldownSeconds={goalCooldownSeconds}
+            onChangeGoalCooldown={setGoalCooldownSeconds}
+            goalCooldownRemainingMs={goalCooldownRemainingMs}
+            availableMics={availableMics}
+            selectedGoalMicId={selectedGoalMicId}
+            onSelectGoalMic={handleSelectGoalMic}
+            onRefreshMics={refreshMics}
+            voskModelStatus={voskModelStatus}
+            voskModelFileName={voskModelFileName}
+            onImportVoskModel={handleImportVoskModel}
+            onRemoveVoskModel={handleRemoveVoskModel}
             hasMouthASlot={hasCharacterSlot(activeCharacter, 'mouthA')}
-            onTestGoalTrigger={triggerGoalPlayback}
+            onTestGoalTrigger={() => triggerGoalPlayback('Test manuale GOAL')}
             isLayoutLocked={isLayoutLocked}
             onToggleLayoutLock={() => setIsLayoutLocked((prev) => !prev)}
             onOpenPopoutWindow={handleOpenPopoutWindow}

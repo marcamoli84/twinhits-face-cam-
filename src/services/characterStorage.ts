@@ -6,6 +6,7 @@ import {
   AspectRatioMode,
   LiveMode,
   StadiumBackgroundSettings,
+  GoalEnginePreference,
 } from '../types/vtuber';
 import { DEFAULT_CHARACTERS } from '../utils/defaultCharacters';
 
@@ -136,6 +137,10 @@ export async function saveAppConfig(config: {
   liveMode?: LiveMode;
   stadiumBgSettings?: StadiumBackgroundSettings;
   isLayoutLocked?: boolean;
+  goalEnginePreference?: GoalEnginePreference;
+  goalMicId?: string;
+  goalCooldownSeconds?: number;
+  voskModelFileName?: string;
 }): Promise<void> {
   try {
     const db = await getDB();
@@ -284,3 +289,16 @@ export async function deleteAvatarMediaBlob(key: string): Promise<void> {
   }
 }
 
+const KEY_VOSK_ITALIAN_MODEL = 'vosk_italian_model_tar_gz';
+
+export async function saveVoskModelBlob(blob: Blob): Promise<void> {
+  await saveAvatarMediaBlob(KEY_VOSK_ITALIAN_MODEL, blob);
+}
+
+export async function loadVoskModelBlob(): Promise<Blob | null> {
+  return loadAvatarMediaBlob(KEY_VOSK_ITALIAN_MODEL);
+}
+
+export async function deleteVoskModelBlob(): Promise<void> {
+  await deleteAvatarMediaBlob(KEY_VOSK_ITALIAN_MODEL);
+}

@@ -1,7 +1,14 @@
+import {
+  AudioInputDeviceInfo,
+  GoalEnginePreference,
+  GoalResolvedEngine,
+  GoalSpeechStatus,
+} from '../types/vtuber';
+
 export interface GoalSpeechCallbacks {
   onGoalDetected: (transcript: string) => void;
   onTranscript?: (transcript: string, isFinal: boolean) => void;
-  onStatusChange?: (status: 'idle' | 'listening' | 'error') => void;
+  onStatusChange?: (status: GoalSpeechStatus) => void;
   onError?: (message: string) => void;
 }
 
@@ -48,8 +55,23 @@ interface SpeechRecognitionInstance extends EventTarget {
 type SpeechRecognitionCtor = new () => SpeechRecognitionInstance;
 
 // Matches spoken variants of "GOL" and "GOAL" (including elongated commentary shouts like "GOOOL", "GOOOAL")
-// while strictly ignoring standalone vowels like "A", "E", "O" or unrelated words like "angolo" or "gola".
+// while ignoring standalone vowels like "A", "E", "O" or unrelated words like "angolo" or "gola".
 const GOAL_KEYWORD_REGEX = /(?:^|[^\p{L}])go+a*l+(?=$|[^\p{L}])/giu;
+
+export function isElectronDesktop(): boolean {
+  if (typeof window === 'undefined') return false;
+  const nav = typeof navigator !== 'undefined' ? navigator.userAgent || '' : '';
+  const winAny = window as unknown as {
+    process?: { versions?: { electron?: string } };
+  };
+  return Boolean(/electron/i.test(nav) || winAny.process?.versions?.electron);
+}
+
+export function resolveGoalEngine(pref: GoalEnginePreference): GoalResolvedEngine {
+  if (pref === 'vosk') return 'vosk';
+  if (pref === 'webspeech') return 'webspeech';
+  return isElectronDesktop() ? 'vosk' : 'webspeech';
+}
 
 function getSpeechRecognitionCtor(): SpeechRecognitionCtor | null {
   if (typeof window === 'undefined') return null;
@@ -62,6 +84,19 @@ function getSpeechRecognitionCtor(): SpeechRecognitionCtor | null {
 
 export function isGoalSpeechSupported(): boolean {
   return getSpeechRecognitionCtor() !== null;
+}
+
+export async function enumerateAudioInputDevices(): Promise<AudioInputDeviceInfo[]> {
+  if (typeof navigator === 'undefined' || !navigator.mediaDevices?.enumerateDevices) {
+    return [];
+  }
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  return devices
+    .filter((d) => d.kind === 'audioinput')
+    .map((d, idx) => ({
+      deviceId: d.deviceId,
+      label: d.label || `Microfono ${idx + 1}`,
+    }));
 }
 
 export function countGoalMatches(transcript: string): number {
@@ -78,6 +113,7 @@ export class GoalSpeechRecognizer {
   private recognition: SpeechRecognitionInstance | null = null;
   private isRunning = false;
   private shouldKeepListening = false;
+  private hasTerminalError = false;
   private restartTimer: number | null = null;
   private handledCountsByIndex = new Map<number, number>();
   private lastTriggeredAt = 0;
@@ -94,13 +130,15 @@ export class GoalSpeechRecognizer {
   public start(): boolean {
     const Ctor = getSpeechRecognitionCtor();
     if (!Ctor) {
-      this.callbacks.onStatusChange?.('error');
+      this.hasTerminalError = true;
+      this.callbacks.onStatusChange?.('unsupported');
       this.callbacks.onError?.(
-        'Riconoscimento vocale non supportato in questo browser. Usa Google Chrome su desktop.'
+        'Web Speech API non supportata in questo ambiente. Usa il motore Offline (Vosk).'
       );
       return false;
     }
 
+    this.hasTerminalError = false;
     this.shouldKeepListening = true;
     this.clearRestartTimer();
     return this.startSession(Ctor);
@@ -118,7 +156,7 @@ export class GoalSpeechRecognizer {
       rec.maxAlternatives = 1;
 
       rec.onstart = () => {
-        if (!this.shouldKeepListening) {
+        if (!this.shouldKeepListening || this.hasTerminalError) {
           try {
             rec.abort();
           } catch {
@@ -131,7 +169,7 @@ export class GoalSpeechRecognizer {
       };
 
       rec.onresult = (event: SpeechRecognitionEventLike) => {
-        if (!this.shouldKeepListening) return;
+        if (!this.shouldKeepListening || this.hasTerminalError) return;
 
         for (let i = event.resultIndex; i < event.results.length; i++) {
           const result = event.results[i];
@@ -147,7 +185,6 @@ export class GoalSpeechRecognizer {
           if (matchCount > prevCount) {
             this.handledCountsByIndex.set(i, matchCount);
             const now = performance.now();
-            // Brief cooldown prevents double-firing when interim transcript fluctuates
             if (now - this.lastTriggeredAt > 600) {
               this.lastTriggeredAt = now;
               this.callbacks.onGoalDetected(trimmed);
@@ -165,40 +202,57 @@ export class GoalSpeechRecognizer {
         }
 
         if (errCode === 'not-allowed' || errCode === 'service-not-allowed') {
+          this.hasTerminalError = true;
           this.shouldKeepListening = false;
           this.isRunning = false;
-          this.callbacks.onStatusChange?.('error');
+          this.callbacks.onStatusChange?.('permission_denied');
           this.callbacks.onError?.(
-            'Permesso microfono negato per il riconoscimento vocale. Consenti il microfono nella barra di Chrome.'
+            'Permesso microfono negato. Consenti il microfono nelle impostazioni di Chrome o Windows.'
           );
           return;
         }
 
         if (errCode === 'audio-capture') {
+          this.hasTerminalError = true;
           this.shouldKeepListening = false;
           this.isRunning = false;
-          this.callbacks.onStatusChange?.('error');
+          this.callbacks.onStatusChange?.('mic_unavailable');
           this.callbacks.onError?.(
-            'Nessun microfono disponibile per il riconoscimento vocale.'
+            'Microfono non disponibile per il riconoscimento vocale.'
           );
           return;
         }
 
         if (errCode === 'network') {
+          // Electron desktop cannot reach Chrome Speech servers: fail cleanly without pretending to listen
+          this.hasTerminalError = true;
+          this.shouldKeepListening = false;
+          this.isRunning = false;
+          this.callbacks.onStatusChange?.('error');
           this.callbacks.onError?.(
-            'Errore di rete del riconoscimento vocale Chrome: nuovo tentativo automatico...'
+            'Errore di rete del riconoscimento vocale Chrome. Su app desktop Electron passa al motore Offline (Vosk).'
           );
+          return;
         }
+
+        this.hasTerminalError = true;
+        this.shouldKeepListening = false;
+        this.isRunning = false;
+        this.callbacks.onStatusChange?.('error');
+        this.callbacks.onError?.(`Errore riconoscimento vocale (${errCode}).`);
       };
 
       rec.onend = () => {
         this.isRunning = false;
         this.recognition = null;
+        if (this.hasTerminalError) {
+          return;
+        }
         if (this.shouldKeepListening) {
           this.clearRestartTimer();
           this.restartTimer = window.setTimeout(() => {
             const NextCtor = getSpeechRecognitionCtor();
-            if (this.shouldKeepListening && NextCtor) {
+            if (this.shouldKeepListening && !this.hasTerminalError && NextCtor) {
               this.startSession(NextCtor);
             }
           }, 220);
@@ -211,7 +265,9 @@ export class GoalSpeechRecognizer {
       rec.start();
       return true;
     } catch (err) {
+      this.hasTerminalError = true;
       this.isRunning = false;
+      this.shouldKeepListening = false;
       const msg = err instanceof Error ? err.message : String(err);
       this.callbacks.onStatusChange?.('error');
       this.callbacks.onError?.(`Impossibile avviare il riconoscimento vocale: ${msg}`);
@@ -228,6 +284,7 @@ export class GoalSpeechRecognizer {
 
   public stop() {
     this.shouldKeepListening = false;
+    this.hasTerminalError = false;
     this.clearRestartTimer();
     this.handledCountsByIndex.clear();
     if (this.recognition) {

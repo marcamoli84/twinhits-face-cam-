@@ -116,3 +116,20 @@ export interface StadiumBackgroundSettings {
   customVideoName?: string;
 }
 
+export type GoalEnginePreference = 'auto' | 'webspeech' | 'vosk';
+export type GoalResolvedEngine = 'webspeech' | 'vosk';
+
+export type GoalSpeechStatus =
+  | 'idle'
+  | 'loading_model'
+  | 'listening'
+  | 'model_unavailable'
+  | 'mic_unavailable'
+  | 'permission_denied'
+  | 'unsupported'
+  | 'error';
+
+export interface AudioInputDeviceInfo {
+  deviceId: string;
+  label: string;
+}
